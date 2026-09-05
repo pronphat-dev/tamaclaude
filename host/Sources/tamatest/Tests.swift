@@ -89,6 +89,33 @@ func runAllTests() {
         equal(f.snapshot(now: t0 + 1).sessions.first?.state, .error, "trouble cuts the line")
     }
 
+    // ลำดับนี้คือทุกเทิร์นของจริง ไม่ใช่กรณีขอบ: prompt เข้า -> เครื่องมือตัวแรกตามมา
+    // ภายในไม่ถึงวินาที · ถ้า `thinking` หน่วงได้ ท่าเครื่องมือจะไม่มีวันได้ขึ้นจอเลย
+    suite("thinking never blocks the pose that says what is happening") {
+        let s = store()
+        s.apply(event("UserPromptSubmit"), now: t0)
+        equal(s.snapshot(now: t0).sessions.first?.state, .thinking, "a turn starts with no news")
+
+        s.apply(event("PreToolUse", tool: "Read"), now: t0 + 0.4)
+        equal(
+            s.snapshot(now: t0 + 0.4).sessions.first?.state, .reading,
+            "news replaces no-news at once, however recently the screen changed")
+
+        // ขากลับยังหน่วงเหมือนเดิม — นั่นคือสิ่งที่ minPose มีไว้ทำจริงๆ
+        s.apply(event("PostToolUse", tool: "Read"), now: t0 + 0.5)
+        equal(
+            s.snapshot(now: t0 + 1).sessions.first?.state, .reading,
+            "a tool that finished fast still gets its five seconds")
+        equal(s.snapshot(now: t0 + 6).sessions.first?.state, .thinking, "then hands the screen back")
+
+        // และเทิร์นที่จบเร็วไม่ต้องรอ thinking หมดเวลาก่อนถึงจะดีใจได้
+        let q = store()
+        q.apply(event("UserPromptSubmit"), now: t0)
+        equal(q.snapshot(now: t0).sessions.first?.state, .thinking, "still thinking")
+        q.apply(event("Stop"), now: t0 + 1)
+        equal(q.snapshot(now: t0 + 1).sessions.first?.state, .celebrate, "a short turn still celebrates")
+    }
+
     suite("a permission card does not outlive the request") {
         let s = store()
         s.apply(event("PreToolUse", tool: "Bash"), now: t0)
@@ -210,11 +237,17 @@ func runAllTests() {
         equal(s.snapshot(now: t0 + 2).sessions.first?.state, .leaving, "the pid alone is not identity")
     }
 
-    suite("stop and the 45 second rule") {
+    // เทิร์นที่จบด้วยคำถามไม่มีเหตุการณ์เป็นของตัวเอง — `AskUserQuestion` กับ
+    // `ExitPlanMode` ไม่ยิง PreToolUse/PostToolUse เลย สิ่งเดียวที่มาถึงคือ `Stop`
+    // ท่าดีใจจึงต้องส่งต่อให้ท่ารอทันที ไม่ใช่ตกลง idle ไปเงียบๆ อีกสี่สิบวินาที
+    suite("a finished turn hands the screen back to you") {
         let s = store()
         s.apply(event("Stop"), now: t0)
         equal(s.snapshot(now: t0 + 1).sessions.first?.state, .celebrate, "celebrates first")
-        equal(s.snapshot(now: t0 + 10).sessions.first?.state, .idle, "then idles")
+        equal(
+            s.snapshot(now: t0 + 6).sessions.first?.state, .waiting,
+            "then asks for you, without waiting out the card's threshold")
+        equal(s.snapshot(now: t0 + 6).attention, 1, "which pulls the screen back to the mascot")
         equal(s.snapshot(now: t0 + 44).cards.count, 0, "silence under the threshold is fine")
 
         let late = s.snapshot(now: t0 + 46)
@@ -238,6 +271,48 @@ func runAllTests() {
             snap.cards.first?.title, "Claude needs your permission",
             "the message is the whole card — the name is already under the mascot")
         equal(snap.cards.first?.kind, .alert, "something is genuinely stuck on you")
+    }
+
+    // Claude Code ไม่ได้ส่งคำขออนุญาตมาทาง Notification ทางเดียวอีกแล้ว — ชื่อใหม่
+    // ที่แปลว่าเรื่องเดียวกันต้องได้ท่าเดียวกัน ไม่ใช่ตกลงไปที่ `default: break`
+    suite("the newer names for needing a human") {
+        for name in ["PermissionRequest", "Elicitation", "TeammateIdle"] {
+            let s = store()
+            s.apply(event("UserPromptSubmit"), now: t0)
+            s.apply(event(name, message: "may I?"), now: t0 + 1)
+            let snap = s.snapshot(now: t0 + 1)
+            equal(snap.sessions.first?.state, .waiting, "\(name) means waiting")
+            equal(snap.cards.first?.title, "may I?", "\(name) raises a card")
+            equal(snap.attention, 1, "\(name) pulls the screen back")
+        }
+
+        // ตัดสินใจแล้วต้องเดินต่อ ทางปฏิเสธไม่มี PostToolUse ตามมาล้างการ์ดให้
+        for name in ["PermissionDenied", "ElicitationResult"] {
+            let s = store()
+            s.apply(event("PermissionRequest", message: "may I?"), now: t0)
+            s.apply(event(name), now: t0 + 1)
+            let snap = s.snapshot(now: t0 + 1)
+            equal(snap.cards.count, 0, "\(name) clears the request it answers")
+            equal(snap.sessions.first?.state, .thinking, "\(name) puts it back to work")
+        }
+
+        // เครื่องมือที่พังจบด้วยชื่อของตัวเอง ถ้าไม่ฟังไว้ท่าจะค้างที่เครื่องมือตัวนั้น
+        let f = store()
+        f.apply(event("PreToolUse", tool: "Bash"), now: t0)
+        equal(f.snapshot(now: t0).sessions.first?.state, .building, "the tool is on screen")
+        f.apply(event("PostToolUseFailure", tool: "Bash"), now: t0 + 6)
+        equal(
+            f.snapshot(now: t0 + 6).sessions.first?.state, .thinking,
+            "a tool that failed still ends the pose it was wearing")
+    }
+
+    // ชื่อที่ daemon จัดการได้ต้องถูกติดตั้งจริง ไม่งั้นมันคือโค้ดที่ไม่มีวันทำงาน
+    suite("every event the store answers to is installed") {
+        for name in ["Notification", "PermissionRequest", "PermissionDenied", "Elicitation",
+                     "ElicitationResult", "TeammateIdle", "StopFailure", "PostToolUseFailure",
+                     "PostToolBatch", "PostCompact"] {
+            expect(HookInstaller.events.contains(name), "\(name) is installed as a hook")
+        }
     }
 
     suite("red means a hand is needed") {

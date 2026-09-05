@@ -2,8 +2,19 @@ import Foundation
 
 /// ค่าเวลาทั้งหมดของตรรกะสถานะ รวมไว้ที่เดียวเพื่อให้เทสต์ตั้งค่าได้
 public struct Timings: Sendable {
-    /// Stop แล้วเงียบเกินเท่านี้ = ถือว่าต้องเตือนผู้ใช้
+    /// Stop แล้วเงียบเกินเท่านี้ = ถือว่าต้องเตือนผู้ใช้ด้วยการ์ด
     public var stopAlert: TimeInterval = 45
+    /// Stop แล้วผ่านไปเท่านี้ = มาสคอตขึ้นท่ารอคำตอบ และจอถูกดึงกลับมาหามาสคอต
+    ///
+    /// แยกจาก `stopAlert` เพราะสองเรื่องนี้ราคาไม่เท่ากัน: ท่ารอคือการเปลี่ยนรูปของตัวที่
+    /// ยืนอยู่บนจออยู่แล้ว ส่วนการ์ดคือแถวใหม่ที่มาแย่งที่ยืนของคนอื่น
+    ///
+    /// ตั้งเท่ากับ `celebrate` โดยตั้งใจ — ท่าดีใจจบแล้วต่อด้วยท่ารอทันที ไม่มี idle คั่น:
+    /// Claude Code ไม่ยิง hook ใดเลยตอนถามคำถามกลางเทิร์น (`AskUserQuestion` กับ
+    /// `ExitPlanMode` ไม่มี PreToolUse/PostToolUse เป็นของตัวเอง) เทิร์นที่จบด้วยคำถาม
+    /// จึงแยกจากเทิร์นที่จบเฉยๆ ไม่ได้เลยจากสายเหตุการณ์ ทางเดียวที่ไม่ทำให้ผู้ใช้พลาด
+    /// คำถามคือถือว่าทุกเทิร์นที่จบแปลว่าถึงตาเขา
+    public var stopWaiting: TimeInterval = 5
     /// ท่าดีใจหลังงานจบ ก่อนกลับไป idle — อย่าตั้งต่ำกว่า `minPose` เพราะ minPose จะยืดให้เองอยู่ดี
     public var celebrate: TimeInterval = 5
     /// ท่าหนึ่งต้องอยู่บนจออย่างน้อยเท่านี้ ก่อนยอมให้ท่าถัดไปแทน
@@ -78,7 +89,7 @@ struct Session {
             // นอนชนะการทวงถาม: ถ้าเงียบมาเป็นนาทีแล้ว ท่ายืนทวงตลอดกาลไม่ได้สื่ออะไรเพิ่ม
             // การเตือนยังอยู่ในรูปการ์ด ซึ่งเป็นคนละช่องทางกับท่าของมาสคอต
             if now >= lastActivity + t.sleep { return .sleeping }
-            if let s = stoppedAt, now >= s + t.stopAlert { return .waiting }
+            if let s = stoppedAt, now >= s + t.stopWaiting { return .waiting }
             return .idle
         }
     }
@@ -99,6 +110,18 @@ struct Session {
         if raw == .entering || raw == .leaving || posed == .entering { return latch() }
         guard let cur = posed else { return latch() }
         if cur == raw { return cur }
+        // ท่าคิดคือการไม่มีข่าว ไม่ใช่ข่าว — มันจึงกันที่ให้ตัวเองไม่ได้
+        //
+        // ทุกเทิร์นเริ่มที่ `thinking` (UserPromptSubmit) และกลับมาที่นี่ทุกครั้งที่เครื่องมือจบ
+        // ถ้ามันหน่วงได้เท่าท่าอื่น มันจะเป็นตัวที่ล็อกจอไว้เกือบตลอดเวลา: PreToolUse ตัวถัดมา
+        // มักมาถึงภายในไม่ถึงวินาที ซึ่งเร็วกว่า `minPose` เสมอ และ priority ก็เท่ากัน
+        // แทรกไม่ได้ · ผลคือท่า reading/writing/building/searching ไม่เคยได้ขึ้นจอเลยสักครั้ง
+        // ทั้งที่ตรรกะข้างในถูกมาตลอด — การหน่วงที่มีไว้กันท่ากระพริบ กลับกลายเป็นตัวกลบ
+        // ทุกท่าที่มันควรจะปกป้อง
+        //
+        // ขากลับยังหน่วงตามปกติ (cur เป็นท่าเครื่องมือ, raw เป็น thinking → รอครบเวลา)
+        // ท่าเครื่องมือจึงยังอยู่ครบห้าวินาทีเหมือนเดิม ซึ่งคือสิ่งที่ `minPose` ตั้งใจจะทำ
+        if cur == .thinking { return latch() }
         // เรื่องด่วนกว่าแทรกได้ทันที (พัง/ต้องการมือคน) ที่เหลือรอให้ท่าปัจจุบันอยู่ครบเวลา
         if raw.priority > cur.priority || now >= posedAt + t.minPose { return latch() }
         return cur
@@ -209,11 +232,14 @@ public final class SessionStore {
             //  การ์ดของรอบนี้จึงไม่โดนล้างทิ้งก่อนผู้ใช้เห็น)
             dismissCards(for: id)
 
-        case "PostToolUse":
+        // เครื่องมือที่พังจบด้วยเหตุการณ์ของตัวเอง ไม่ใช่ PostToolUse — ถ้าไม่ฟังไว้
+        // มาสคอตจะค้างท่าของเครื่องมือตัวนั้นจนกว่าจะมีอย่างอื่นบังเอิญมาแทน
+        // (PostToolBatch ปิดท้ายชุดที่ยิงขนานกัน ตัวสุดท้ายที่จบเป็นตัวบอกว่าหมดชุดจริง)
+        case "PostToolUse", "PostToolUseFailure", "PostToolBatch":
             s.activity = .thinking
             dismissCards(for: id)
 
-        case "PreCompact":
+        case "PreCompact", "PostCompact":
             s.activity = .thinking
 
         case "SubagentStart":
@@ -223,7 +249,13 @@ public final class SessionStore {
         case "SubagentStop":
             s.subagents = max(0, s.subagents - 1)
 
-        case "Notification":
+        // สี่ชื่อ เรื่องเดียวกัน: เดินต่อเองไม่ได้ถ้าไม่มีมือคน
+        //
+        // Claude Code รุ่นใหม่ไม่ได้ส่งคำขออนุญาตมาทาง `Notification` ทางเดียวอีกแล้ว —
+        // `PermissionRequest` เป็นเหตุการณ์ของตัวเอง, `Elicitation` คือ MCP ที่ขอคำตอบ
+        // กลางการเรียกเครื่องมือ, `TeammateIdle` คือเพื่อนร่วมทีมที่ค้างรออยู่
+        // ชื่อที่รุ่นเก่าไม่รู้จักก็แค่ไม่เคยยิง ไม่มีใครเสียหาย
+        case "Notification", "PermissionRequest", "Elicitation", "TeammateIdle":
             s.activity = .waiting
             s.stoppedAt = nil
             push(
@@ -234,6 +266,13 @@ public final class SessionStore {
                     kind: .alert,
                     createdAt: now
                 ))
+
+        // ตัดสินใจไปแล้ว = คำขอนั้นตายแล้ว · ทางปฏิเสธไม่มี PostToolUse ตามมาล้างให้
+        // การ์ดจึงต้องถูกเก็บตรงนี้ ไม่ใช่ปล่อยให้ค้างจนหมดอายุเอง
+        case "PermissionDenied", "ElicitationResult":
+            s.activity = .thinking
+            s.stoppedAt = nil
+            dismissCards(for: id)
 
         case "Stop":
             s.activity = .idle

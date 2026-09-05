@@ -12,14 +12,31 @@ public enum HookInstaller {
     }
 
     /// hook ที่ daemon ใช้จริง — ตรงกับ `switch` ใน SessionStore.apply
+    ///
+    /// ชื่อที่ Claude Code รุ่นนั้นไม่รู้จักจะไม่มีวันยิง คีย์ที่เกินมาใน settings.json
+    /// ไม่ทำให้ hook ตัวอื่นเสีย จึงติดตั้งเผื่อทั้งชุดได้ แทนที่จะต้องเดารุ่นของผู้ใช้
     public static let events = [
         "SessionStart",
         "UserPromptSubmit",
         "PreToolUse",
         "PostToolUse",
+        // เครื่องมือที่พังไม่ได้จบด้วย PostToolUse — ขาดตัวนี้ไปมาสคอตจะค้างท่าเครื่องมือ
+        "PostToolUseFailure",
+        "PostToolBatch",
         "PreCompact",
+        "PostCompact",
         "Notification",
+        // คำขออนุญาตแยกออกมาเป็นเหตุการณ์ของตัวเองแล้ว ไม่ได้มาทาง Notification ทางเดียว
+        // และ Elicitation คือ MCP ที่ขอคำตอบจากคน — ทั้งคู่แปลว่า "รอมือคน" เหมือนกัน
+        "PermissionRequest",
+        "PermissionDenied",
+        "Elicitation",
+        "ElicitationResult",
+        "TeammateIdle",
         "Stop",
+        // เทิร์นที่ตายเพราะ API ไม่ยิง Stop · SessionStore รู้จักชื่อนี้มาตลอด
+        // แต่ไม่เคยถูกติดตั้ง ท่า error ของเทิร์นที่ล้มจึงไม่เคยขึ้นจอจริง
+        "StopFailure",
         // ต้องมีคู่กับ SubagentStop เสมอ — ถ้าติดตั้งแต่ Stop ตัวนับจะติดลบไม่ได้
         // (max(0,·)) แล้วค้างที่ศูนย์ตลอด ท่า conducting จะไม่มีวันโผล่
         "SubagentStart",
