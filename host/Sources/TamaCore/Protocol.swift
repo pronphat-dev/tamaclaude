@@ -18,6 +18,13 @@ public struct HookEvent: Codable, Equatable, Sendable {
     /// optional เพราะรุ่นที่ยังไม่ส่งฟิลด์นี้มีอยู่จริง และเป็นรุ่นที่ต้องทำงานได้เหมือนเดิม
     /// ทุกประการ · ดู `SessionStore.quiet` ว่าชนิดไหนที่ *ไม่* ได้แปลว่ามีคนรออยู่
     public var notificationType: String?
+    /// `tool_input` ทั้งก้อนในรูปข้อความ — เก็บไว้ให้ `Risk` *ค้นคำ* ไม่ใช่ให้ใครอ่านโครงสร้าง
+    ///
+    /// Claude Code ไม่ได้ส่งคีย์นี้มา `--hook` เป็นคนเติมเองจากไบต์ดิบก่อนส่งเข้า socket
+    /// (กติกาเดียวกับ `owner`) — รูปร่างของ `tool_input` ต่างกันทุกเครื่องมือ การถอดมัน
+    /// ผ่าน Codable ให้ครบต้องมีต้นไม้ชนิดใหม่ทั้งต้น เพื่อผลลัพธ์ที่เราจะแบนกลับเป็น
+    /// ข้อความอยู่ดี · ชื่อคีย์บนสายจึงไม่ใช่ `tool_input` เพื่อไม่ให้ชนกับของจริง
+    public var toolInput: String?
     /// process ของ Claude Code ที่เป็นเจ้าของ session นี้
     ///
     /// Claude Code ไม่ได้ส่งมาใน stdin — `--hook` เป็นคนเติมเองจากสายบรรพบุรุษของตัวเอง
@@ -35,6 +42,7 @@ public struct HookEvent: Codable, Equatable, Sendable {
         case reason
         case source
         case notificationType = "notification_type"
+        case toolInput = "tool_input_text"
         case owner
     }
 
@@ -48,6 +56,7 @@ public struct HookEvent: Codable, Equatable, Sendable {
         reason: String? = nil,
         source: String? = nil,
         notificationType: String? = nil,
+        toolInput: String? = nil,
         owner: ProcessHandle? = nil
     ) {
         self.hookEventName = hookEventName
@@ -59,6 +68,7 @@ public struct HookEvent: Codable, Equatable, Sendable {
         self.reason = reason
         self.source = source
         self.notificationType = notificationType
+        self.toolInput = toolInput
         self.owner = owner
     }
 
