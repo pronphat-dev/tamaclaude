@@ -233,6 +233,26 @@ public struct AskSnap: Codable, Equatable, Sendable {
         self.title = title
         self.mayAllow = mayAllow
     }
+
+    // ธงเดินทางเป็นเลข ไม่ใช่ `true` — กติกาเดียวกับ `PageSettings.attentionJump`
+    //
+    // ไม่ใช่เรื่องไบต์ (แม้จะประหยัดสามตัว) แต่เป็นเรื่องที่ปลายทางอ่านออก: cJSON แยก
+    // `cJSON_IsNumber` กับ `cJSON_IsTrue` เป็นคนละชนิด เฟิร์มแวร์ที่ถามผิดข้อจะอ่าน
+    // `true` เป็น "ไม่" เงียบๆ แล้วปุ่มเขียวจะไม่มีวันโผล่ · เคยเกิดแล้ว และเห็นบนบอร์ด
+    // ก่อนจะเห็นในเทสต์ ซึ่งเป็นลำดับที่กลับกับที่ควรเป็น
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        mayAllow = try c.decode(Int.self, forKey: .mayAllow) != 0
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encode(mayAllow ? 1 : 0, forKey: .mayAllow)
+    }
 }
 
 /// ก้อนเดียวที่อธิบายทั้งหน้าจอ — firmware วาดจากสิ่งนี้อย่างเดียว ไม่เก็บสถานะเอง

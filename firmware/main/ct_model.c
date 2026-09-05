@@ -139,8 +139,11 @@ bool ct_model_parse(const char *json, int len, ct_snapshot_t *out)
     if (cJSON_IsObject(ask)) {
         copy_str(tmp.ask.id, sizeof(tmp.ask.id), cJSON_GetObjectItem(ask, "i"));
         copy_str(tmp.ask.title, sizeof(tmp.ask.title), cJSON_GetObjectItem(ask, "t"));
+        // รับทั้งเลขและ true — Mac ส่งเลขมา (กติกาเดิมของสายนี้) ส่วน JSON ที่คนเขียน
+        // เองตอนทดสอบมักเขียน true · ค่าที่อ่านไม่ออกแปลว่า "ไม่อนุญาต" ซึ่งเป็นฝั่งที่
+        // ปลอดภัย แต่ค่าที่อ่านออกได้ต้องอ่านให้ถูก ไม่ใช่ตกไปอยู่ฝั่งปลอดภัยเพราะถามผิดข้อ
         const cJSON *may = cJSON_GetObjectItem(ask, "a");
-        tmp.ask.may_allow = cJSON_IsNumber(may) && may->valueint != 0;
+        tmp.ask.may_allow = cJSON_IsTrue(may) || (cJSON_IsNumber(may) && may->valueint != 0);
         // ไม่มี id = ตอบกลับไม่ได้ ซึ่งแปลว่าปุ่มบนจอจะกดแล้วไม่เกิดอะไรขึ้น
         // การ์ดที่กดไม่ได้แย่กว่าไม่มีการ์ด เพราะมันบอกว่ามีอะไรให้ทำทั้งที่ไม่มี
         tmp.ask.present = tmp.ask.id[0] != '\0';

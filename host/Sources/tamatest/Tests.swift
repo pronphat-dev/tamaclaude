@@ -2347,6 +2347,17 @@ func runAllTests() {
         expect(text.contains("A1B2C3D4"), "the id is still there after the squeeze")
         expect(text.contains("npm test"), "and so is what it is asking about")
 
+        // ธงต้องเป็นเลข ไม่ใช่ `true` — cJSON ฝั่งบอร์ดแยกสองชนิดนี้ออกจากกัน และ
+        // การถามผิดข้อทำให้ `true` ถูกอ่านเป็น "ไม่" เงียบๆ · บั๊กนี้เกิดแล้วจริง และ
+        // ถูกจับได้ด้วยตาบนบอร์ด ก่อนที่เทสต์ตัวไหนจะพูดถึงมัน
+        let flag = String(
+            decoding: try Snapshot(
+                clock: "15:04", date: "Fri 14 Aug",
+                ask: AskSnap(id: "A1B2C3D4", title: "Bash: npm test", mayAllow: true)
+            ).encoded(), as: UTF8.self)
+        expect(flag.contains(#""a":1"#), "the flag travels as a number")
+        expect(!flag.contains("true"), "and nothing on this wire is a bare JSON boolean")
+
         // ไม่มีคำถามค้างอยู่ = ไม่มีคีย์นี้บนสายเลย ไม่ใช่คีย์ที่มีค่าว่าง
         snap.ask = nil
         expect(
