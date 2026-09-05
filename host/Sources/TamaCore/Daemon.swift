@@ -25,6 +25,8 @@ public final class Daemon {
         public var sessionId: String
         public var project: String
         public var tool: String
+        /// สิ่งที่จะขึ้นบนจอ — สั้นและตัดมาเรียบร้อยแล้วตั้งแต่ตอนสร้าง
+        public var summary: String
         /// จอเสนอปุ่ม Allow ให้ใบนี้ได้ไหม (`Risk`) — ปุ่ม Deny เสนอได้เสมอทุกใบ
         public var boardMayAllow: Bool
         public var askedAt: Date
@@ -127,14 +129,20 @@ public final class Daemon {
         let tool = e.toolName ?? ""
         // id สั้นพอให้คนพิมพ์ตามได้ (`--decide`) และพอให้จอส่งกลับมาได้ในเฟรมเดียว
         let id = String(UUID().uuidString.prefix(8))
+        let mayAllow = !Risk.needsKeyboard(tool: tool, input: e.toolInput)
         pending[id] = (
             Pending(
                 id: id, sessionId: e.sessionId, project: e.project, tool: tool,
-                boardMayAllow: !Risk.needsKeyboard(tool: tool, input: e.toolInput),
+                summary: PanelText.ask(tool: tool, input: e.toolInput),
+                boardMayAllow: mayAllow,
                 askedAt: Date()),
             reply
         )
-        Log.info("waiting on a decision for \(tool) — id \(id)")
+        // เขียนไว้ให้นับได้ทีหลัง: สัดส่วนของคำขอที่จอกดเขียวไม่ได้ คือตัวเลขที่บอกว่า
+        // `Risk` ตั้งกว้างไปหรือพอดี และเป็นตัวเลขที่เดาแทนไม่ได้ ต้องวัดจากการใช้จริง
+        Log.info(
+            "waiting on a decision for \(tool) — id \(id) "
+                + "(\(mayAllow ? "board may allow" : "keyboard only"))")
     }
 
     /// ตอบคำขอหนึ่งใบแล้วเอาออกจากรายการ · เรียกซ้ำด้วย id เดิมไม่เกิดอะไรขึ้น
@@ -169,6 +177,17 @@ public final class Daemon {
             Log.info("nobody answered \(entry.0.tool) in time — asking you instead")
             settle(id, allow: nil)
         }
+    }
+
+    /// คำถามที่จอต้องวาด — ใบที่เก่าที่สุดก่อน เพราะเป็นใบที่คนรอนานที่สุดแล้ว
+    ///
+    /// ใบเดียวเสมอ: จอถามได้ทีละคำถาม และคำถามสองใบซ้อนกันบนจอที่ถูกเหลือบมองคือ
+    /// ทางที่ทำให้กดถูกปุ่มแต่ผิดใบ · ใบที่เหลือรอคิว หรือหมดเวลาไปเองตามปกติ
+    private var ask: AskSnap? {
+        guard
+            let oldest = pending.values.map(\.0).min(by: { $0.askedAt < $1.askedAt })
+        else { return nil }
+        return AskSnap(id: oldest.id, title: oldest.summary, mayAllow: oldest.boardMayAllow)
     }
 
     private static func answer(_ answer: Decision.Answer) -> Data {
@@ -238,6 +257,7 @@ public final class Daemon {
         let now = Date()
         var snapshot = store.snapshot(now: now)
         snapshot.usage = UsageReader.read(now: now)
+        snapshot.ask = ask
         guard let data = try? snapshot.encoded() else { return }
         guard data != lastSent else { return }
         lastSent = data

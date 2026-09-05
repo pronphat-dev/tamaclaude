@@ -521,6 +521,13 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// ทันที ไม่ต้องรอให้ผู้ใช้ไปกดอะไร — เขาไม่มีทางรู้ว่าตัวเลขสองชุดนี้ต่างกันอยู่
     private func boardSaid(_ event: BoardEvent) {
         prefs.apply(event)
+        // นิ้วบนจอตอบคำถามที่ hook กำลังค้างรออยู่ · daemon เป็นคนตัดสินว่าคำตอบนี้
+        // ใช้ได้จริงไหม (`Risk`) ที่นี่แค่พาสารมาถึงมือมัน
+        if case .decided(let id, let allow) = event {
+            Log.info("the board answered \(allow ? "allow" : "deny") for \(id)")
+            daemon.decide(id: id, allow: allow)
+            return
+        }
         if case .capability(let kinds) = event {
             boardPages = kinds
             UserDefaults.standard.set(kinds.map(\.rawValue), forKey: Self.capabilityKey)

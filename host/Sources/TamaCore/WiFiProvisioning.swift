@@ -109,6 +109,12 @@ public enum BoardEvent: Equatable, Sendable {
     /// (ลาก `.app` ทับใช้เวลา 5 วินาที ส่วนการแฟลชต้องหาสาย USB) และการแปลเลข
     /// เวอร์ชันเป็นรายการฟีเจอร์คือตารางที่เน่าทันทีที่ firmware มีสายที่สอง
     case capability([PageKind])
+    /// ผู้ใช้แตะปุ่มบนจอ ตอบคำขออนุญาตใบที่ค้างอยู่
+    ///
+    /// `id` เดินทางไปกับ snapshot แล้วกลับมาที่นี่ — จอไม่ได้ตอบว่า "อนุญาต" เฉยๆ
+    /// แต่ตอบว่า "อนุญาต *ใบนี้*" · คำขอที่ถูกยกเลิกไปแล้วระหว่างที่นิ้วกำลังลงจึงตกไป
+    /// เงียบๆ แทนที่จะไปอนุญาตใบถัดไปที่ผู้ใช้ยังไม่ได้อ่าน
+    case decided(id: String, allow: Bool)
 
     /// คืน nil เมื่อไม่ใช่ข้อความที่เรารู้จัก — firmware รุ่นใหม่กว่าต้องไม่ทำให้แอปพัง
     public static func decode(_ data: Data) -> BoardEvent? {
@@ -132,6 +138,10 @@ public enum BoardEvent: Equatable, Sendable {
             // firmware ที่ใหม่กว่าแอปคือสภาพที่มีจริงพอๆ กับทางกลับกัน
             let ids = (object["p"] as? [Any])?.compactMap { ($0 as? NSNumber)?.intValue } ?? []
             return .capability(ids.compactMap(PageKind.init(rawValue:)))
+
+        case "ok":
+            guard let id = object["i"] as? String, !id.isEmpty else { return nil }
+            return .decided(id: id, allow: ((object["a"] as? NSNumber)?.intValue ?? 0) != 0)
 
         case "wifi":
             let state = WiFiStatus.State(rawValue: object["st"] as? String ?? "") ?? .off
@@ -217,8 +227,11 @@ public struct NetworkList: Equatable, Sendable {
             scanning = false
         case .wifi(let status):
             saved = status.saved
-        case .capability:
-            break  // หน้า Wi-Fi ไม่รู้จักเรื่อง page — คนที่ฟังคือ `PageHub`
+        case .capability, .decided:
+            // หน้า Wi-Fi ไม่รู้จักเรื่อง page และไม่รู้จักคำขออนุญาต — คนที่ฟังสองเรื่องนี้
+            // คือ `PageHub` กับ `Daemon` · เขียนชื่อเคสไว้แทนที่จะใช้ `default` เพื่อให้
+            // เคสถัดไปที่ใครเพิ่มเข้ามายังหยุดคอมไพเลอร์ได้เหมือนที่เคสนี้เพิ่งหยุด
+            break
         }
     }
 

@@ -2297,6 +2297,63 @@ func runAllTests() {
             "and no daemon at all is that same nil, not a hang")
     }
 
+    // คนที่กำลังจะกดปุ่มต้องอ่านออกในเหลือบเดียวว่ากำลังอนุญาตอะไร ไม่งั้นปุ่มนั้นเป็น
+    // แค่ปุ่ม "ตกลง" ที่ไม่มีใครรู้ว่าตกลงกับอะไร
+    suite("what the card on the screen says it is asking about") {
+        equal(
+            PanelText.ask(tool: "Bash", input: #"{"command":"npm test"}"#),
+            "Bash: npm test", "the command is the part worth reading, not the braces")
+        equal(
+            PanelText.ask(tool: "Write", input: #"{"file_path":"/tmp/a.txt","content":"hi"}"#),
+            "Write: /tmp/a.txt", "for a write it is the path, not the payload")
+        equal(PanelText.ask(tool: "Bash", input: nil), "Bash", "no input still names the tool")
+        equal(
+            PanelText.ask(tool: "mcp__x__y", input: #"{"nothing":"we know"}"#), "mcp__x__y",
+            "a shape we do not recognise falls back to the name, not to punctuation")
+        expect(
+            PanelText.ask(
+                tool: "Bash", input: "{\"command\":\"" + String(repeating: "x", count: 200) + "\"}"
+            ).count <= Text.Limit.cardTitle.ascii,
+            "a long command is cut to something the screen can actually hold")
+    }
+
+    // คำตอบจากจอผูกกับ *ใบ* ไม่ใช่แค่คำว่า allow — ใบที่หายไปแล้วต้องไม่พาใบถัดไปไปด้วย
+    suite("the board answers one particular request") {
+        equal(
+            BoardEvent.decode(Data(#"{"t":"ok","i":"A1B2C3D4","a":1}"#.utf8)),
+            .decided(id: "A1B2C3D4", allow: true), "a tap on the green button")
+        equal(
+            BoardEvent.decode(Data(#"{"t":"ok","i":"A1B2C3D4","a":0}"#.utf8)),
+            .decided(id: "A1B2C3D4", allow: false), "and one on the red")
+        equal(
+            BoardEvent.decode(Data(#"{"t":"ok","a":1}"#.utf8)), nil,
+            "an answer with no request attached is not an answer")
+        equal(
+            BoardEvent.decode(Data(#"{"t":"ok","i":"","a":1}"#.utf8)), nil,
+            "and neither is an empty one")
+    }
+
+    // การ์ดคำถามต้องรอดจากการบีบให้พอดี MTU — มันเป็นแถวเดียวบนจอที่มีคนรออยู่จริง
+    suite("the question survives a wire that is too small") {
+        var snap = Snapshot(
+            clock: "15:04", date: "Fri 14 Aug",
+            sessions: (0..<3).map { SessionSnap(project: "project-\($0)", state: .waiting) },
+            cards: (0..<2).map {
+                CardSnap(title: String(repeating: "long", count: 12), body: "\($0)", kind: .alert)
+            },
+            usage: [UsageSnap(percent: 50, remaining: 100), UsageSnap(percent: 60, remaining: 200)],
+            ask: AskSnap(id: "A1B2C3D4", title: "Bash: npm test", mayAllow: true))
+        let text = String(decoding: try snap.encoded(maxBytes: 200), as: UTF8.self)
+        expect(text.contains("A1B2C3D4"), "the id is still there after the squeeze")
+        expect(text.contains("npm test"), "and so is what it is asking about")
+
+        // ไม่มีคำถามค้างอยู่ = ไม่มีคีย์นี้บนสายเลย ไม่ใช่คีย์ที่มีค่าว่าง
+        snap.ask = nil
+        expect(
+            !String(decoding: try snap.encoded(), as: UTF8.self).contains(#""q""#),
+            "a screen with nothing to ask pays no bytes for the question")
+    }
+
     // เงียบคือค่าเริ่มต้น — `ask` ต้องไม่กลายเป็นคำสั่งอะไรทั้งนั้น
     suite("what the hook prints back to Claude Code") {
         equal(HookClient.output(for: Decision(.ask)), nil, "ask says nothing at all")

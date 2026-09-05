@@ -146,6 +146,36 @@ public enum PanelText {
         return "Listening · last heard \(age(now.timeIntervalSince(heard))) ago"
     }
 
+    /// หัวการ์ดคำขออนุญาตบนจอ — "เครื่องมือ · สิ่งที่มันกำลังจะทำ"
+    ///
+    /// ดึงค่าที่คนอ่านแล้วรู้เรื่องออกมาจาก `tool_input` แทนที่จะโยน JSON ทั้งก้อนขึ้นจอ
+    /// คนที่กำลังจะกดปุ่มต้องอ่านออกในเหลือบเดียวว่ากำลังอนุญาตอะไร ไม่งั้นปุ่มนั้นก็เป็น
+    /// แค่ปุ่ม "ตกลง" ที่ไม่มีใครรู้ว่าตกลงกับอะไร
+    ///
+    /// คีย์ที่ลองตามลำดับคือคีย์ที่เครื่องมือใช้จริง ไม่ใช่ทุกคีย์ที่เป็นไปได้ — ตัวที่ไม่เข้า
+    /// รายการเหลือแค่ชื่อเครื่องมือ ซึ่งยังบอกอะไรได้มากกว่าวงเล็บปีกกาเต็มบรรทัด
+    public static func ask(tool: String, input: String?) -> String {
+        let name = tool.isEmpty ? "a tool" : tool
+        guard let detail = input.flatMap(readable), !detail.isEmpty else {
+            return Text.fit(name, to: Text.Limit.cardTitle)
+        }
+        // ทั้งบรรทัดผ่าน `fit` รอบเดียว ไม่ใช่ต่อหัวที่ไม่ได้ผ่านเข้ากับหางที่ผ่านแล้ว —
+        // ตัวคั่นสวยๆ อย่าง "·" ไม่มีในฟอนต์บนบอร์ด มันจะหายไปเงียบๆ ตอนวาด ถ้าไม่มี
+        // ใครพามันเดินผ่าน `sanitize` ให้เห็นก่อนตั้งแต่ที่นี่
+        return Text.fit(name + ": " + detail, to: Text.Limit.cardTitle)
+    }
+
+    /// ค่าที่อ่านรู้เรื่องหนึ่งค่าจาก `tool_input` — nil เมื่อไม่มีคีย์ไหนที่เรารู้จักเลย
+    private static func readable(_ input: String) -> String? {
+        guard let data = input.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return input }  // ไม่ใช่ JSON ก็แปลว่ามันเป็นข้อความอยู่แล้ว
+        for key in ["command", "file_path", "path", "url", "pattern", "query", "prompt"] {
+            if let value = object[key] as? String, !value.isEmpty { return value }
+        }
+        return nil
+    }
+
     /// หนึ่งแถวต่อหนึ่ง session แล้วปิดท้ายด้วยจำนวนที่ล้นออกจาก slot ของบอร์ด
     ///
     /// `+N more` เป็นแถวสุดท้ายเสมอ ถ้าอยู่ข้างบนมันจะอ่านเหมือนหัวข้อของแถวที่ตามมา

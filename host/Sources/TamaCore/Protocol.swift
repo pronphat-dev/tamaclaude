@@ -207,6 +207,34 @@ public struct UsageSnap: Codable, Equatable, Sendable {
     }
 }
 
+/// คำขออนุญาตที่ค้างอยู่ ตามที่จอต้องรู้เพื่อวาดการ์ดสองปุ่ม
+///
+/// เล็กที่สุดเท่าที่ยังตอบได้ครบ เพราะมันเบียดที่ของ snapshot ทั้งก้อนใน MTU เดียว
+public struct AskSnap: Codable, Equatable, Sendable {
+    /// id ที่ต้องส่งกลับมาพร้อมคำตอบ
+    public var id: String
+    /// สิ่งที่กำลังจะเกิดขึ้น — "Bash · npm test"
+    public var title: String
+    /// จอเสนอปุ่ม Allow ได้ไหม (`Risk`)
+    ///
+    /// `false` ไม่ได้แปลว่าซ่อนปุ่มขวา แต่แปลว่าปุ่มขวาเปลี่ยนความหมายเป็น "ไปตอบที่
+    /// คีย์บอร์ด" · การ์ดที่มีปุ่มเดียวบอกแค่ว่าทำอะไรไม่ได้ การ์ดที่ปุ่มขวาจางอยู่บอกว่า
+    /// เรื่องนี้ต้องใช้คุณจริงๆ ซึ่งเป็นคนละข้อความกัน
+    public var mayAllow: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id = "i"
+        case title = "t"
+        case mayAllow = "a"
+    }
+
+    public init(id: String, title: String, mayAllow: Bool) {
+        self.id = id
+        self.title = title
+        self.mayAllow = mayAllow
+    }
+}
+
 /// ก้อนเดียวที่อธิบายทั้งหน้าจอ — firmware วาดจากสิ่งนี้อย่างเดียว ไม่เก็บสถานะเอง
 /// ต้องพอดี 1 MTU (517) เสมอ ดู `encoded(maxBytes:)`
 public struct Snapshot: Codable, Equatable, Sendable {
@@ -227,6 +255,11 @@ public struct Snapshot: Codable, Equatable, Sendable {
     /// ถ้าดูจากสถานะแทน จอจะถูกกระชากกลับทุก snapshot ตลอดสิบนาทีที่คำขออนุญาตค้างอยู่
     /// และเรื่องใหม่ของ session ที่สอง (ซึ่งไม่เปลี่ยนสถานะรวมเลย) จะไม่ได้เด้งสักครั้ง
     public var attention: Int
+    /// คำขออนุญาตที่กำลังรอมือคน — `nil` คือไม่มีใครถามอะไรอยู่ ซึ่งเป็นสภาพปกติ
+    ///
+    /// ใบเดียวเสมอ ไม่ใช่รายการ: จอถามได้ทีละคำถาม และคำถามที่ซ้อนกันสองใบบนจอที่
+    /// ถูกเหลือบมองคือทางที่ทำให้กดผิดใบ · ใบที่เหลือรอคิว หรือหมดเวลาไปเองตามปกติ
+    public var ask: AskSnap?
 
     enum CodingKeys: String, CodingKey {
         case clock = "c"
@@ -237,6 +270,7 @@ public struct Snapshot: Codable, Equatable, Sendable {
         case cardOverflow = "m"
         case usage = "u"
         case attention = "a"
+        case ask = "q"
     }
 
     public init(
@@ -247,7 +281,8 @@ public struct Snapshot: Codable, Equatable, Sendable {
         cards: [CardSnap] = [],
         cardOverflow: Int = 0,
         usage: [UsageSnap]? = nil,
-        attention: Int = 0
+        attention: Int = 0,
+        ask: AskSnap? = nil
     ) {
         self.clock = clock
         self.date = date
@@ -257,6 +292,7 @@ public struct Snapshot: Codable, Equatable, Sendable {
         self.cardOverflow = cardOverflow
         self.usage = usage
         self.attention = attention
+        self.ask = ask
     }
 }
 
