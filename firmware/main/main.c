@@ -26,6 +26,42 @@
 
 static const char *TAG = "main";
 
+// ใบล่าสุดที่เราตอบไปแล้ว — กันการแตะซ้ำบนการ์ดใบเดิม
+//
+// การ์ดยังอยู่บนจออีกราวหนึ่งวินาทีหลังตอบ เพราะมันจะหายก็ต่อเมื่อ Mac ส่ง snapshot
+// ใบใหม่ที่ไม่มีคำถามมาแล้ว (ADR-0001 — บอร์ดไม่ลบของที่ยังไม่มีใครบอกให้ลบ)
+// นิ้วที่แตะซ้ำในช่วงนั้นต้องไม่ส่งคำตอบใบที่สอง
+static char s_answered[CT_ASK_ID_LEN];
+
+// นิ้วลงบนจอตอนมีคำขออนุญาตค้างอยู่
+//
+// บอร์ดไม่ได้ตัดสินอะไร มันส่ง "คนแตะปุ่มนี้ บนใบนี้" กลับไป แล้ว Mac เป็นคนตัดสิน
+// ว่าคำตอบนั้นใช้ได้ไหม (`Risk`) — คำว่า allow จากที่นี่ไม่ใช่คำสั่ง มันคือรายงาน
+static void answer_ask(int x, int y)
+{
+    ct_ask_hit_t hit = ct_pages_ask_hit(x, y);
+    if (hit == CT_ASK_HIT_NONE) return;
+
+    const char *id = ct_pages_ask_id();
+    if (id[0] == '\0') return;
+    if (strcmp(id, s_answered) == 0) return;
+    snprintf(s_answered, sizeof(s_answered), "%s", id);
+
+    // ปุ่มขวาที่เขียนว่า "Keyboard" ก็ส่ง allow เหมือนกัน ไม่ใช่ไม่ส่งอะไรเลย —
+    // Mac จะปฏิเสธมันด้วย `Risk` แล้วตอบ `ask` กลับไป ซึ่งทำให้ terminal ขึ้นคำถาม
+    // *เดี๋ยวนี้* แทนที่จะรอหมดเวลายี่สิบห้าวินาที · ปุ่มนั้นจึงพาไปที่คีย์บอร์ดจริงๆ
+    // ตามที่มันเขียนไว้ และเส้นทางที่เดินคือเส้นเดียวกับที่ด่านความปลอดภัยเฝ้าอยู่
+    char json[64];
+    int n = snprintf(json, sizeof(json), "{\"t\":\"ok\",\"i\":\"%s\",\"a\":%d}", id,
+                     hit == CT_ASK_HIT_ALLOW ? 1 : 0);
+    ct_ble_notify(json, n);
+    // ไฟกะพริบคือการบอกว่า "ได้ยินแล้ว" ไม่ใช่การบอกว่าผลลัพธ์คืออะไร — การ์ดจะหายไป
+    // ก็ต่อเมื่อ Mac ตอบกลับมาว่ามันหายแล้วจริงๆ ซึ่งกินเวลาราวหนึ่งวินาที · จอที่เงียบ
+    // สนิทตลอดวินาทีนั้นอ่านได้ว่าการแตะไม่ติด แล้วคนจะแตะซ้ำ
+    ct_led_flash();
+    ESP_LOGI(TAG, "answered %s with %s", id, hit == CT_ASK_HIT_ALLOW ? "allow" : "deny");
+}
+
 // บัฟเฟอร์วาดของ LVGL: 1/10 ของจอสองก้อน (~15KB) ไม่ใช่ framebuffer เต็ม 150KB
 // บอร์ดนี้ไม่มี PSRAM จึงไม่มีทางเลือกอื่นอยู่แล้ว
 #define DRAW_LINES 24
@@ -435,10 +471,12 @@ void app_main(void)
         apply_pending();
         // อ่านสัมผัสทุกลูป (ตัวมันจับจังหวะ poll เอง) ไม่ใช่ทุกเฟรม — การปัดต้องเปลี่ยนหน้า
         // ทันทีโดยไม่รอ Mac และไม่รอจังหวะวาด
-        ct_swipe_t swipe = ct_touch_poll(step_ms);
-        if (swipe != CT_SWIPE_NONE) {
+        ct_touch_event_t touch = ct_touch_poll_event(step_ms);
+        if (touch.swipe != CT_SWIPE_NONE) {
             // ปัดซ้ายคือดันหน้าที่ดูอยู่ออกไปทางซ้ายเพื่อเปิดหน้าถัดไป เหมือนกองการ์ด
-            ct_pages_step(swipe == CT_SWIPE_LEFT);
+            ct_pages_step(touch.swipe == CT_SWIPE_LEFT);
+        } else if (touch.tap) {
+            answer_ask(touch.x, touch.y);
         }
         since_frame += step_ms;
         if (since_frame >= 60) {  // ~16 เฟรมต่อวินาที พอสำหรับอนิเมชันบล็อกสี่เหลี่ยม

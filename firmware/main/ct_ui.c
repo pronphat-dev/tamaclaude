@@ -916,6 +916,26 @@ bool ct_ui_shows_usage(void)
     return usage_shown() && shown_card_count() == 0;
 }
 
+ct_ask_hit_t ct_ui_ask_hit(int x, int y)
+{
+    if (!ask_shown()) return CT_ASK_HIT_NONE;
+    int top = CT_CARD_TOP + CT_CARD_PAD + CT_ASK_BUTTON_TOP;
+    if (y < top || y >= top + CT_ASK_BUTTON_H) return CT_ASK_HIT_NONE;
+
+    int deny_x = CT_CARD_PAD;
+    int allow_x = CT_CARD_PAD + CT_ASK_BUTTON_W + CT_ASK_GAP;
+    if (x >= deny_x && x < deny_x + CT_ASK_BUTTON_W) return CT_ASK_HIT_DENY;
+    if (x >= allow_x && x < allow_x + CT_ASK_BUTTON_W) return CT_ASK_HIT_ALLOW;
+    // ตกในช่องว่างระหว่างปุ่ม — ไม่ใช่ความล้มเหลวที่ต้องเดาให้ว่าเขาเล็งอันไหน
+    // แต่เป็นคำตอบของมันเอง: การเล็งไม่แม่นจบลงที่ไม่มีอะไรเกิดขึ้น (ADR-0014)
+    return CT_ASK_HIT_NONE;
+}
+
+const char *ct_ui_ask_id(void)
+{
+    return ask_shown() ? s_frame->ask.id : "";
+}
+
 // การ์ดสองบรรทัดสูงกว่าเพราะกล่องบรรทัดต้องมีที่ให้วรรณยุกต์ไทยจริงๆ ไม่ใช่แค่ตัวละติน
 static int card_h(const ct_card_t *c) { return c->body[0] ? CT_CARD_H_TWO : CT_CARD_H_ONE; }
 

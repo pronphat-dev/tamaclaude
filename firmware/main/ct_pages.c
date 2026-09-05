@@ -415,6 +415,17 @@ void ct_pages_step(bool forward)
     s_return_to = CT_PAGE_KIND_COUNT;
 }
 
+ct_ask_hit_t ct_pages_ask_hit(int x, int y)
+{
+    if (s_active != CT_PAGE_MASCOT) return CT_ASK_HIT_NONE;
+    return ct_ui_ask_hit(x, y);
+}
+
+const char *ct_pages_ask_id(void)
+{
+    return s_active == CT_PAGE_MASCOT ? ct_ui_ask_id() : "";
+}
+
 void ct_pages_attention(void)
 {
     if (!s_plan.attention_jump) return;
