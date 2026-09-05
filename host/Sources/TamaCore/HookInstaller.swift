@@ -44,6 +44,84 @@ public enum HookInstaller {
         "SessionEnd",
     ]
 
+    /// สภาพของ hook ที่ติดตั้งไว้จริง ณ วินาทีนี้ — อ่านอย่างเดียว ไม่แตะไฟล์
+    public struct Status: Equatable, Sendable {
+        /// ชื่อเหตุการณ์ที่มีคำสั่งของเราอยู่แล้ว (รวมชื่อที่เราเลิกใช้ไปแล้วด้วย)
+        public var installed: Set<String>
+        /// พาธที่ hook ชี้ไปตอนนี้ — nil = ไฟล์นี้ไม่เคยรู้จักเรา
+        public var command: String?
+        /// พาธที่ *ควร* ชี้ คือแอปตัวที่กำลังถามอยู่นี้
+        public var wanted: String
+
+        /// เคยกดติดตั้งไว้ไหม — เกณฑ์ว่า "ของนี้เป็นของเขาแล้ว" ซึ่งต่างจาก
+        /// "เราควรติดตั้งให้เขา" อย่างสิ้นเชิง ดู `repair`
+        public var isInstalled: Bool { command != nil }
+        /// ชี้มาที่แอปตัวนี้ไหม — แอปที่ถูกย้าย/อัปเกรดทำให้ข้อนี้เป็นเท็จเงียบๆ
+        public var matchesBinary: Bool { command == wanted }
+        public var covered: [String] { HookInstaller.events.filter { installed.contains($0) } }
+        public var missing: [String] { HookInstaller.events.filter { !installed.contains($0) } }
+        public var isHealthy: Bool { isInstalled && matchesBinary && missing.isEmpty }
+
+        public init(installed: Set<String>, command: String?, wanted: String) {
+            self.installed = installed
+            self.command = command
+            self.wanted = wanted
+        }
+    }
+
+    /// คำสั่งที่เขียนลงไฟล์ — ที่เดียวที่รู้รูปแบบนี้ ทั้งขาเขียนและขาอ่าน
+    public static func command(for binary: String) -> String {
+        "\(URL(fileURLWithPath: binary).standardizedFileURL.path) --hook"
+    }
+
+    /// อ่านว่าตอนนี้ไฟล์ของผู้ใช้พูดถึงเราว่าอย่างไร
+    ///
+    /// ไฟล์อ่านไม่ออก/ไม่มี = "ไม่เคยติดตั้ง" ไม่ใช่ error: ฟังก์ชันนี้ถูกเรียกทุกวินาที
+    /// ตอนหน้าตั้งค่าเปิดอยู่ และไม่มีอะไรให้ผู้ใช้ทำต่างกันระหว่างสองกรณีนั้น
+    /// `at:` มีไว้ให้เทสต์ชี้ไปที่ไฟล์ชั่วคราว — `Paths.home` อ่านจาก getpwuid
+    /// จึงหลอกด้วย env ไม่ได้ (เหตุผลเดียวกับ `cacheTarget` ใน main.swift)
+    public static func status(
+        binary: String = CommandLine.arguments[0], at settings: URL = HookInstaller.settingsPath
+    ) -> Status {
+        let wanted = command(for: binary)
+        guard let data = try? Data(contentsOf: settings),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let hooks = root["hooks"] as? [String: Any]
+        else { return Status(installed: [], command: nil, wanted: wanted) }
+
+        var installed: Set<String> = []
+        var found: String?
+        for (event, value) in hooks {
+            for entry in value as? [[String: Any]] ?? [] {
+                for hook in entry["hooks"] as? [[String: Any]] ?? [] {
+                    guard let c = hook["command"] as? String,
+                        c.contains("tamaclaude"), c.contains("--hook")
+                    else { continue }
+                    installed.insert(event)
+                    // ตัวแรกที่เจอเป็นตัวแทนทั้งไฟล์ — `install` เขียนพาธเดียวกันทุกที่เสมอ
+                    if found == nil { found = c }
+                }
+            }
+        }
+        return Status(installed: installed, command: found, wanted: wanted)
+    }
+
+    /// ทำให้ hook ที่ *เคยติดตั้งไว้* กลับมาตรงกับแอปตัวนี้ — คืน true เมื่อได้เขียนจริง
+    ///
+    /// **ซ่อม ไม่ใช่ติดตั้ง** — คนที่ไม่เคยกดติดตั้งต้องไม่ถูกเขียน `~/.claude/settings.json`
+    /// ให้โดยไม่ได้ขอ ไฟล์นั้นเป็นของเขา · แต่คนที่เคยกดแล้วคือคนที่ *ขอไว้แล้ว* ว่าอยากให้
+    /// จอขยับ การปล่อยให้พาธที่ค้างอยู่พาไปหาสำเนาที่ถูกลบไปแล้วจึงไม่ใช่การเคารพเจตนาเขา
+    ///
+    /// จำเป็นเพราะความเงียบของ hook ที่พังแยกไม่ออกจาก "วันนี้ยังไม่ได้เปิด session" เลย
+    /// สักนิด — ทุกครั้งที่แอปถูกย้ายหรืออัปเกรดไปที่ใหม่ ระบบทั้งระบบจะตายเงียบ
+    @discardableResult
+    public static func repair(binary: String = CommandLine.arguments[0]) throws -> Bool {
+        let now = status(binary: binary)
+        guard now.isInstalled, !now.isHealthy else { return false }
+        try install(binary: binary)
+        return true
+    }
+
     public enum InstallError: Error, CustomStringConvertible {
         case unreadableSettings
         case notJSONObject
@@ -57,7 +135,7 @@ public enum HookInstaller {
     }
 
     public static func install(binary: String = CommandLine.arguments[0]) throws {
-        let command = "\(URL(fileURLWithPath: binary).standardizedFileURL.path) --hook"
+        let command = Self.command(for: binary)
         var root: [String: Any] = [:]
 
         if FileManager.default.fileExists(atPath: settingsPath.path) {

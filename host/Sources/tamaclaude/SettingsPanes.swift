@@ -891,7 +891,10 @@ struct ClaudePane: View {
             VStack(alignment: .leading, spacing: 6) {
                 GroupHeading(text: "Hooks and logs")
                 Card {
-                    LabeledRow(title: "Hooks", subtitle: "~/.claude/settings.json") {
+                    // บรรทัดล่างเคยเป็นพาธของไฟล์ ซึ่งไม่เคยเปลี่ยน จึงไม่เคยตอบอะไรให้ใคร
+                    // ตอนนี้มันบอกว่าท่อยังมีชีวิตอยู่ไหม ซึ่งเป็นเรื่องเดียวที่คนเปิดหน้านี้
+                    // มาหา · เดินทุกวินาทีตอนหน้าต่างเปิด ตัวเลขที่ขยับเป็นหลักฐานในตัวมันเอง
+                    LabeledRow(title: "Hooks", subtitle: model.hooks) {
                         Button("Install") { model.onInstallHooks?() }
                     }
                     CardDivider()

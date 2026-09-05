@@ -108,14 +108,42 @@ public enum PanelText {
     /// วาดใหม่ทุกวินาทีอยู่แล้ว ตัวเลขที่เดินจึงเป็นหลักฐานว่าแผงยังมีชีวิต
     public static func updated(stamp: Date?, now: Date = Date()) -> String {
         guard let stamp else { return "No quota figures yet" }
-        // นาฬิกาเครื่องเดินถอยหลังได้ (sleep, NTP) — อายุติดลบต้องไม่กลายเป็นข้อความประหลาด
-        let age = Int(max(0, now.timeIntervalSince(stamp)))
-        if age < 60 { return "Updated \(age)s ago" }
+        return "Updated \(age(now.timeIntervalSince(stamp))) ago"
+    }
+
+    /// ความเก่าเป็นคำเดียว — "3s" / "12m" / "4h" / "2d"
+    ///
+    /// นาฬิกาเครื่องเดินถอยหลังได้ (sleep, NTP) — อายุติดลบต้องไม่กลายเป็นข้อความประหลาด
+    public static func age(_ seconds: TimeInterval) -> String {
+        let age = Int(max(0, seconds))
+        if age < 60 { return "\(age)s" }
         let minutes = age / 60
-        if minutes < 60 { return "Updated \(minutes)m ago" }
+        if minutes < 60 { return "\(minutes)m" }
         let hours = minutes / 60
-        if hours < 48 { return "Updated \(hours)h ago" }
-        return "Updated \(hours / 24)d ago"
+        if hours < 48 { return "\(hours)h" }
+        return "\(hours / 24)d"
+    }
+
+    /// บรรทัดเดียวใต้คำว่า "Hooks" ในหน้าตั้งค่า
+    ///
+    /// เดิมบรรทัดนี้เป็นพาธของไฟล์ ซึ่งเป็นข้อเท็จจริงที่ไม่เคยเปลี่ยน จึงไม่เคยตอบอะไร
+    /// ให้ใคร · คนที่เปิดหน้านี้มาถามอยู่คำถามเดียว — "ตอนนี้มันได้ยินอยู่ไหม" — และเมื่อ
+    /// คำตอบคือไม่ ระบบทั้งระบบเงียบสนิทโดยไม่มีอาการอื่นให้จับเลยสักอย่าง
+    ///
+    /// เรียงจากเสียหายมากไปน้อยแล้วหยุดที่ข้อแรกที่จริง: บรรทัดเดียวบอกได้เรื่องเดียว
+    /// และเรื่องที่ควรบอกคือเรื่องที่ขวางอยู่ใกล้ผู้ใช้ที่สุด
+    public static func hooks(
+        _ status: HookInstaller.Status, heard: Date?, now: Date = Date()
+    ) -> String {
+        guard status.isInstalled else { return "Not installed — the mascot cannot move" }
+        // พาธที่ค้างอยู่ไม่ทำให้ Claude Code บ่นสักคำ มันรันไฟล์ที่ไม่มีอยู่แล้วเดินต่อ
+        guard status.matchesBinary else { return "Pointing at another copy of the app" }
+        guard status.missing.isEmpty else {
+            return "\(status.covered.count) of \(HookInstaller.events.count) events"
+                + " · install again to add the rest"
+        }
+        guard let heard else { return "Listening · nothing heard yet" }
+        return "Listening · last heard \(age(now.timeIntervalSince(heard))) ago"
     }
 
     /// หนึ่งแถวต่อหนึ่ง session แล้วปิดท้ายด้วยจำนวนที่ล้นออกจาก slot ของบอร์ด

@@ -61,6 +61,11 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         UserDefaults.standard.object(forKey: MenuBarApp.brightnessKey) as? Int ?? 100
     /// แถวโควตาชุดล่าสุดที่ daemon ประกาศออกมา — ตัวเดียวกับที่แบดจ์กิน
     private var usage: [UsageSnap]?
+    /// เวลาที่ได้ยิน hook ตัวล่าสุด — nil = ยังไม่เคยได้ยินเลยตั้งแต่แอปเปิด
+    ///
+    /// ไม่เก็บลงดิสก์โดยตั้งใจ: คำถามคือ "ท่อยังมีชีวิตอยู่ไหม" ซึ่งเป็นคำถามของ
+    /// โปรเซสนี้ ไม่ใช่ของเครื่อง · ตัวเลขที่รอดข้ามการรีสตาร์ทจะตอบคำถามผิดข้อ
+    private var lastEventAt: Date?
 
     private let popover = NSPopover()
     private let panel = PanelViewController()
@@ -163,6 +168,11 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         daemon.onPublish = { [weak self] snapshot in
             DispatchQueue.main.async { self?.show(snapshot) }
         }
+        // "ยังได้ยินอยู่ไหม" ต้องถามที่ขาเข้า ไม่ใช่ที่ `onPublish` — เหตุการณ์ส่วนใหญ่
+        // ไม่ทำให้ภาพเปลี่ยน มันจึงเงียบเหมือนกันทั้งตอนท่อดีและตอนท่อขาด
+        daemon.onEvent = { [weak self] _ in
+            DispatchQueue.main.async { self?.lastEventAt = Date() }
+        }
         do {
             try daemon.start()
         } catch {
@@ -171,6 +181,17 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             alert("TamaClaude could not start", "\(error)")
             NSApp.terminate(nil)
             return
+        }
+
+        // hook ที่เคยติดตั้งไว้ชี้ไปที่สำเนาเก่าทุกครั้งที่แอปถูกย้ายหรืออัปเกรดไปที่ใหม่
+        // และรุ่นใหม่ที่เพิ่มชื่อเหตุการณ์เข้ามาก็ไม่มีใครไปเติมให้ · ทั้งสองอย่างไม่มีอาการ
+        // อะไรให้เห็นเลยนอกจากจอที่ไม่ขยับ ซึ่งแยกไม่ออกจาก "วันนี้ยังไม่ได้เปิด session"
+        //
+        // เฉพาะตัวที่รันจาก .app เท่านั้น — ตัวที่รันจาก `swift run` เป็นของนักพัฒนา
+        // มันไม่ควรแย่ง settings.json ของเครื่องไปชี้ที่ `.build/debug` ซึ่งหายไปได้ทุกเมื่อ
+        if Bundle.main.bundleURL.pathExtension == "app",
+            (try? HookInstaller.repair()) == true {
+            Log.info("hooks repaired — they were pointing somewhere else")
         }
 
         // หน้าที่บอร์ดตัวล่าสุดรู้จัก — ของที่จำไว้ใช้ได้จนกว่าบอร์ดจะบอกใหม่
@@ -234,7 +255,11 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self.starter.tick(usage: self.usage)
             // สถานะของหน้าหุ้นเปลี่ยนเองได้ระหว่างที่ผู้ใช้มองอยู่ (key ถูกปฏิเสธ ตลาดปิด
             // สัญลักษณ์ที่หาไม่เจอ) — หน้าต่างที่เปิดค้างไว้ต้องไม่โชว์ประโยคของเมื่อครู่
-            if self.prefs.isShowing { self.showStocks() }
+            if self.prefs.isShowing {
+                self.showStocks()
+                // อายุของ event ล่าสุดต้องเดินให้เห็น — ตัวเลขที่ค้างคือหลักฐานที่อ่านผิดได้
+                self.showHooks()
+            }
         }
     }
 
@@ -470,6 +495,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         showCrypto()
         showStocks()
         showCalendar()
+        showHooks()
         prefs.show()
         // ถามสถานะซ้ำเสมอ: บอร์ดรายงานตอนมันเปลี่ยน ซึ่งอาจเป็นก่อนที่หน้าต่างนี้จะมีตัวตน
         ble.sendConfig(WiFiCommand.status.payload)
@@ -801,12 +827,22 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func installHooks() {
         do {
             try HookInstaller.install()
+            showHooks()
             alert(
                 "Hooks installed",
                 "Claude Code will report to TamaClaude from the next session onwards.")
         } catch {
             alert("Could not install hooks", "\(error)")
         }
+    }
+
+    /// บรรทัดสถานะใต้คำว่า Hooks — อ่านไฟล์จริงทุกครั้ง ไม่ใช่จำผลตอนติดตั้ง
+    ///
+    /// ไฟล์นั้นเป็นของผู้ใช้ เขาแก้มันเองได้ตลอดเวลาโดยแอปไม่มีทางรู้ · ค่าที่จำไว้จึงเป็น
+    /// ค่าที่พูดแทนอดีต ในหน้าที่ทั้งหน้ามีไว้ตอบว่าปัจจุบันเป็นอย่างไร
+    private func showHooks() {
+        prefs.showHooks(
+            PanelText.hooks(HookInstaller.status(), heard: lastEventAt))
     }
 
     /// เปิด/ปิดการยึดช่อง statusLine ซึ่งเป็นทางเดียวที่ตัวเลขโควตาเดินทางมาถึงบอร์ด

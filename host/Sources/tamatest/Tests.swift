@@ -306,6 +306,97 @@ func runAllTests() {
             "a tool that failed still ends the pose it was wearing")
     }
 
+    // hook ที่ชี้ผิดที่ไม่ส่งเสียงบ่นสักคำ — ไม่ว่าจาก Claude Code หรือจากแอปเรา
+    // มันเงียบเหมือนกันทุกประการกับ "วันนี้ยังไม่ได้เปิด session" ซึ่งเป็นสถานะปกติ
+    suite("what the settings file says about us") {
+        let dir = FileManager.default.temporaryDirectory
+        func write(_ json: String) throws -> URL {
+            let url = dir.appendingPathComponent("settings-\(UUID().uuidString).json")
+            try Data(json.utf8).write(to: url)
+            return url
+        }
+        let mine = "/Applications/TamaClaude.app/Contents/MacOS/tamaclaude"
+        let hook = HookInstaller.command(for: mine)
+
+        // ไฟล์ที่ไม่มีอยู่ = ยังไม่เคยติดตั้ง ไม่ใช่ error — `status` ถูกเรียกทุกวินาที
+        let none = HookInstaller.status(
+            binary: mine, at: dir.appendingPathComponent("nope-\(UUID().uuidString).json"))
+        equal(none.isInstalled, false, "a file that is not there has never heard of us")
+        equal(none.isHealthy, false, "and nothing about that is healthy")
+
+        // ติดตั้งครบทุกชื่อ ชี้มาที่ตัวเอง
+        let full = try write(
+            "{\"hooks\":{" + HookInstaller.events.map {
+                "\"\($0)\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"\(hook)\"}]}]"
+            }.joined(separator: ",") + "}}")
+        defer { try? FileManager.default.removeItem(at: full) }
+        let ok = HookInstaller.status(binary: mine, at: full)
+        equal(ok.isHealthy, true, "every event, pointing here")
+        equal(ok.missing.isEmpty, true, "nothing left to add")
+
+        // แอปถูกย้าย/อัปเกรด: คำสั่งเดิมยังอยู่ครบ แต่ชี้ไปที่สำเนาที่ไม่มีแล้ว
+        let moved = try write(
+            "{\"hooks\":{" + HookInstaller.events.map {
+                "\"\($0)\":[{\"hooks\":[{\"type\":\"command\","
+                    + "\"command\":\"/Users/x/Downloads/tamaclaude --hook\"}]}]"
+            }.joined(separator: ",") + "}}")
+        defer { try? FileManager.default.removeItem(at: moved) }
+        let old = HookInstaller.status(binary: mine, at: moved)
+        equal(old.isInstalled, true, "it still knows us")
+        equal(old.matchesBinary, false, "but not this copy of us")
+        equal(old.isHealthy, false, "which is the whole failure, and it is silent")
+
+        // ติดตั้งจากรุ่นเก่าที่ยังไม่รู้จักชื่อใหม่ — ของเก่ายังทำงาน ของใหม่ไม่เคยมา
+        let stale = try write(
+            "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\","
+                + "\"command\":\"\(hook)\"}]}],"
+                + "\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\","
+                + "\"command\":\"\(hook)\"}]}]}}")
+        defer { try? FileManager.default.removeItem(at: stale) }
+        let partial = HookInstaller.status(binary: mine, at: stale)
+        equal(partial.matchesBinary, true, "the path is right")
+        equal(partial.covered.count, 2, "but only two of the events are there")
+        equal(partial.isHealthy, false, "an old install is not a good install")
+
+        // hook ของคนอื่นในไฟล์เดียวกันต้องไม่ถูกนับเป็นของเรา
+        let others = try write(
+            "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\","
+                + "\"command\":\"/usr/local/bin/notify-me\"}]}]}}")
+        defer { try? FileManager.default.removeItem(at: others) }
+        equal(
+            HookInstaller.status(binary: mine, at: others).isInstalled, false,
+            "someone else's hook is not ours")
+    }
+
+    // บรรทัดเดียวบอกได้เรื่องเดียว — เรื่องที่ควรบอกคือเรื่องที่ขวางอยู่ใกล้ผู้ใช้ที่สุด
+    suite("the hook line says the nearest thing that is wrong") {
+        let mine = "/Applications/TamaClaude.app/Contents/MacOS/tamaclaude"
+        let want = HookInstaller.command(for: mine)
+        func status(_ installed: Set<String>, _ command: String?) -> HookInstaller.Status {
+            HookInstaller.Status(installed: installed, command: command, wanted: want)
+        }
+        let all = Set(HookInstaller.events)
+
+        equal(
+            PanelText.hooks(status([], nil), heard: nil, now: t0),
+            "Not installed — the mascot cannot move", "nothing installed comes first")
+        equal(
+            PanelText.hooks(status(all, "/old/tamaclaude --hook"), heard: t0, now: t0),
+            "Pointing at another copy of the app",
+            "a wrong path beats a full event list — nothing arrives either way")
+        equal(
+            PanelText.hooks(status(["Stop"], want), heard: t0, now: t0),
+            "1 of \(HookInstaller.events.count) events · install again to add the rest",
+            "a partial install names the gap instead of claiming to be fine")
+        equal(
+            PanelText.hooks(status(all, want), heard: nil, now: t0),
+            "Listening · nothing heard yet",
+            "healthy but silent is not the same as healthy and busy")
+        equal(
+            PanelText.hooks(status(all, want), heard: t0, now: t0 + 90),
+            "Listening · last heard 1m ago", "and the age is the proof it is alive")
+    }
+
     // ชื่อที่ daemon จัดการได้ต้องถูกติดตั้งจริง ไม่งั้นมันคือโค้ดที่ไม่มีวันทำงาน
     suite("every event the store answers to is installed") {
         for name in ["Notification", "PermissionRequest", "PermissionDenied", "Elicitation",

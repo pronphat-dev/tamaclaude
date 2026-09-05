@@ -182,6 +182,8 @@ final class PreferencesWindowController: NSWindowController {
 
     func showKey(_ state: SessionKeyState) { model.keyState = state }
 
+    func showHooks(_ line: String) { model.hooks = line }
+
     /// ทางที่ snapshot เดินอยู่จริง — คนละเรื่องกับ "บอร์ดต่อ WiFi แล้ว"
     ///
     /// บอร์ดที่ขึ้นเน็ตสำเร็จแต่ Mac หาไม่เจอ (client isolation, คนละ subnet) จะดูดีทุกอย่าง

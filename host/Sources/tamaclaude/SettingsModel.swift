@@ -52,6 +52,8 @@ final class SettingsModel: ObservableObject {
     @Published var autoStart = false
     @Published var login = false
     @Published var keyState: SessionKeyState = .none
+    /// บรรทัดใต้คำว่า "Hooks" — `PanelText.hooks` เป็นคนแต่ง ที่นี่แค่ถือไว้ให้ view อ่าน
+    @Published var hooks = ""
 
     // --- Screen --------------------------------------------------------------
     @Published var pages = PageSettings()

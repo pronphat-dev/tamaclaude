@@ -22,6 +22,13 @@ public final class Daemon {
     /// ถูกเรียกจากคิวของ daemon ไม่ใช่เธรดหลัก
     public var onPublish: ((Snapshot) -> Void)?
 
+    /// เรียกทุกครั้งที่ได้ยิน hook — แยกจาก `onPublish` เพราะสองคำถามนี้คนละคำถาม
+    ///
+    /// ภาพที่ไม่เปลี่ยนไม่ได้แปลว่าไม่มีอะไรเข้ามา (เหตุการณ์ส่วนใหญ่ตกท่าไปกับ `minPose`
+    /// และ `lastSent`) — "ท่อยังมีชีวิตอยู่ไหม" จึงต้องถามที่ขาเข้า ไม่ใช่ที่ขาออก
+    /// ถูกเรียกจากคิวของ daemon ไม่ใช่เธรดหลัก
+    public var onEvent: ((HookEvent) -> Void)?
+
     public init(store: SessionStore, transports: [Transport]) {
         self.store = store
         self.transports = transports
@@ -69,6 +76,7 @@ public final class Daemon {
                 let event = try JSONDecoder().decode(HookEvent.self, from: line)
                 Log.debug("event \(event.hookEventName) \(event.toolName ?? "")")
                 self.store.apply(event, now: Date())
+                self.onEvent?(event)
                 self.publish()
             } catch {
                 Log.debug("bad event: \(error)")
