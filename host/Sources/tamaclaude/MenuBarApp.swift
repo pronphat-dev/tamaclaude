@@ -145,7 +145,9 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         lan.setManualHost(UserDefaults.standard.string(forKey: Self.boardHostKey))
 
-        let store = SessionStore(toolMap: ToolMap.loadOrDefault(Paths.toolConfig))
+        let store = SessionStore(
+            toolMap: ToolMap.loadOrDefault(Paths.toolConfig),
+            timings: Timings.loadOrDefault(Paths.timingConfig))
         failover = FailoverTransport(ble: ble, lan: lan)
         failover.onRouteChanged = { [weak self] route in
             DispatchQueue.main.async {

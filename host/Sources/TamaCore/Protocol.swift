@@ -13,6 +13,11 @@ public struct HookEvent: Codable, Equatable, Sendable {
     public var prompt: String?
     public var reason: String?
     public var source: String?
+    /// ชนิดของ `Notification` — `permission_prompt`, `idle_prompt`, `auth_success` ฯลฯ
+    ///
+    /// optional เพราะรุ่นที่ยังไม่ส่งฟิลด์นี้มีอยู่จริง และเป็นรุ่นที่ต้องทำงานได้เหมือนเดิม
+    /// ทุกประการ · ดู `SessionStore.quiet` ว่าชนิดไหนที่ *ไม่* ได้แปลว่ามีคนรออยู่
+    public var notificationType: String?
     /// process ของ Claude Code ที่เป็นเจ้าของ session นี้
     ///
     /// Claude Code ไม่ได้ส่งมาใน stdin — `--hook` เป็นคนเติมเองจากสายบรรพบุรุษของตัวเอง
@@ -29,6 +34,7 @@ public struct HookEvent: Codable, Equatable, Sendable {
         case prompt
         case reason
         case source
+        case notificationType = "notification_type"
         case owner
     }
 
@@ -41,6 +47,7 @@ public struct HookEvent: Codable, Equatable, Sendable {
         prompt: String? = nil,
         reason: String? = nil,
         source: String? = nil,
+        notificationType: String? = nil,
         owner: ProcessHandle? = nil
     ) {
         self.hookEventName = hookEventName
@@ -51,6 +58,7 @@ public struct HookEvent: Codable, Equatable, Sendable {
         self.prompt = prompt
         self.reason = reason
         self.source = source
+        self.notificationType = notificationType
         self.owner = owner
     }
 

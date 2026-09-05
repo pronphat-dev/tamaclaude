@@ -70,6 +70,8 @@ snapshot's clock. That costs nothing on the wire and does not move the line abov
 gets drawn is still a value the daemon sent, never one the board synthesised. A frame the
 board would have to treat as expired is treated as absent instead.
 Tool-to-animation mapping is host-side and user-overridable at `~/.tamaclaude/tools.json`.
+Pose timing is overridable the same way at `~/.tamaclaude/timings.json` (keys match the
+`Timings` properties; a negative value is dropped, the rest of the file still applies).
 
 ## Commands
 
@@ -187,8 +189,9 @@ look at `out/`. It proves the *design*, not the C renderer.
 | `TamaCore/Calendar.swift` | the calendar page frame + the appointment-to-rows converter, as pure functions |
 | `TamaCore/CalendarService.swift` | which calendars may show, the 5 min round, and what the page says when it cannot read |
 | `TamaCore/EventKitCalendars.swift` | the only file that touches EventKit — read-only, and thin enough to have nothing to test |
-| `TamaCore/SessionStore.swift` | all the logic: hook → per-session state → snapshot |
+| `TamaCore/SessionStore.swift` | all the logic: hook → per-session state → snapshot · `Timings` reads `~/.tamaclaude/timings.json` |
 | `TamaCore/ToolMap.swift` | tool name → `VisualState`, overridable via `~/.tamaclaude/tools.json` |
+| `TamaCore/HookInstaller.swift` | writes our hooks into `~/.claude/settings.json`, reads back their `Status`, and repairs a stale path at launch |
 | `TamaCore/Text.swift` | strip to the board font's charset, shape Thai, then truncate |
 | `TamaCore/ThaiShaper.swift` | the Thai cluster walk and glyph-variant choice (ADR-0008) |
 | `TamaCore/ThaiTable.swift` | generated from `tools/thai.toml` — never edit |

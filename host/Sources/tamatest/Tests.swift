@@ -397,6 +397,62 @@ func runAllTests() {
             "Listening · last heard 1m ago", "and the age is the proof it is alive")
     }
 
+    // แจ้งให้รู้ ≠ ขอให้ทำ · ทั้งสองอย่างเดินทางมาทางเหตุการณ์เดียวกัน
+    suite("a notification that is only news does not raise a hand") {
+        let s = store()
+        s.apply(event("UserPromptSubmit"), now: t0)
+        var quiet = event("Notification", message: "Login successful")
+        quiet.notificationType = "auth_success"
+        s.apply(quiet, now: t0 + 1)
+        let snap = s.snapshot(now: t0 + 1)
+        equal(snap.sessions.first?.state, .thinking, "signing in is not a request")
+        equal(snap.cards.count, 0, "and it does not earn a red card")
+        equal(snap.attention, 0, "nor pull the screen away from what it was showing")
+
+        var asking = event("Notification", message: "may I?")
+        asking.notificationType = "permission_prompt"
+        s.apply(asking, now: t0 + 2)
+        equal(
+            s.snapshot(now: t0 + 2).sessions.first?.state, .waiting,
+            "the type that does ask still does")
+
+        // รุ่นที่ยังไม่ส่งชนิดมามีอยู่จริง และต้องทำงานเหมือนเดิมทุกประการ
+        let old = store()
+        old.apply(event("Notification", message: "needs you"), now: t0)
+        equal(
+            old.snapshot(now: t0).sessions.first?.state, .waiting,
+            "no type at all means the old behaviour, never silence")
+
+        // บัญชีดำ ไม่ใช่บัญชีขาว — ชนิดที่ยังไม่มีในโลกต้องถูกเห็นไว้ก่อน
+        let future = store()
+        var unknown = event("Notification", message: "?")
+        unknown.notificationType = "something_claude_code_adds_later"
+        future.apply(unknown, now: t0)
+        equal(
+            future.snapshot(now: t0).sessions.first?.state, .waiting,
+            "an unknown type errs towards being seen, not towards being missed")
+    }
+
+    // จังหวะเวลาของท่าเป็นเรื่องของรสนิยม — ลองค่าได้โดยไม่ต้อง build ใหม่
+    suite("timings config file") {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("timings-\(UUID().uuidString).json")
+        try Data(#"{"stopWaiting":1,"minPose":0,"sleep":-5,"nonsense":9}"#.utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let t = try Timings.load(from: url)
+        equal(t.stopWaiting, 1, "the file sets what it names")
+        equal(t.minPose, 0, "zero is a real answer — it means hold nothing")
+        equal(t.sleep, Timings().sleep, "a negative is dropped alone, not with the whole file")
+        equal(t.stopAlert, Timings().stopAlert, "keys it never mentions keep their defaults")
+
+        let gone = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gone-\(UUID().uuidString).json")
+        equal(
+            Timings.loadOrDefault(gone).minPose, Timings().minPose,
+            "no file at all is the default, not a crash")
+    }
+
     // ชื่อที่ daemon จัดการได้ต้องถูกติดตั้งจริง ไม่งั้นมันคือโค้ดที่ไม่มีวันทำงาน
     suite("every event the store answers to is installed") {
         for name in ["Notification", "PermissionRequest", "PermissionDenied", "Elicitation",

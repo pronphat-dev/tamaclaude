@@ -121,7 +121,9 @@ case "--usage-poll":
 case "--daemon":
     Paths.ensureStateDir()
     Log.toFile = true
-    let store = SessionStore(toolMap: ToolMap.loadOrDefault(Paths.toolConfig))
+    let store = SessionStore(
+        toolMap: ToolMap.loadOrDefault(Paths.toolConfig),
+        timings: Timings.loadOrDefault(Paths.timingConfig))
     var transports: [Transport] = []
     if !args.contains("--no-ble") { transports.append(BLETransport()) }
     if args.contains("--print") || args.contains("--no-ble") {

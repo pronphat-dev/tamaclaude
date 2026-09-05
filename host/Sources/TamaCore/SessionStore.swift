@@ -35,6 +35,52 @@ public struct Timings: Sendable {
     public var cardTTL: TimeInterval = 600
 
     public init() {}
+
+    // MARK: - ไฟล์คอนฟิก
+
+    /// รูปแบบไฟล์ — คีย์ไหนไม่มีก็ใช้ค่าเริ่มต้นของคีย์นั้น
+    /// ```json
+    /// { "stopWaiting": 5, "minPose": 5, "sleep": 300 }
+    /// ```
+    /// ชื่อคีย์ตรงกับชื่อ property เป๊ะๆ ที่นี่ไม่มีศัพท์ชุดที่สองให้ต้องจำ
+    private struct File: Decodable {
+        var stopAlert: TimeInterval?
+        var stopWaiting: TimeInterval?
+        var celebrate: TimeInterval?
+        var minPose: TimeInterval?
+        var entering: TimeInterval?
+        var leaving: TimeInterval?
+        var sleep: TimeInterval?
+        var evict: TimeInterval?
+        var cardTTL: TimeInterval?
+    }
+
+    public static func load(from url: URL) throws -> Timings {
+        let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: url))
+        var t = Timings()
+        // ค่าติดลบคือเวลาที่เดินถอยหลัง ซึ่งไม่มีความหมายกับตัวจับเวลาสักตัวในนี้ —
+        // ทิ้งทีละคีย์ ไม่ใช่ทิ้งทั้งไฟล์: คีย์ที่เหลือยังเป็นเจตนาที่อ่านออกอยู่
+        func take(_ value: TimeInterval?, _ into: inout TimeInterval) {
+            guard let value, value >= 0 else { return }
+            into = value
+        }
+        take(file.stopAlert, &t.stopAlert)
+        take(file.stopWaiting, &t.stopWaiting)
+        take(file.celebrate, &t.celebrate)
+        take(file.minPose, &t.minPose)
+        take(file.entering, &t.entering)
+        take(file.leaving, &t.leaving)
+        take(file.sleep, &t.sleep)
+        take(file.evict, &t.evict)
+        take(file.cardTTL, &t.cardTTL)
+        return t
+    }
+
+    /// อ่านคอนฟิกถ้ามี ไม่มีก็ใช้ค่าเริ่มต้น — ไฟล์เสียไม่ควรทำให้ daemon ตาย
+    /// (กติกาเดียวกับ `ToolMap.loadOrDefault` และด้วยเหตุผลเดียวกัน)
+    public static func loadOrDefault(_ url: URL) -> Timings {
+        (try? load(from: url)) ?? Timings()
+    }
 }
 
 /// สิ่งที่ session กำลังทำ — เก็บแค่นี้ ส่วนสถานะภาพคำนวณจากมันบวกเวลา
@@ -177,6 +223,21 @@ public final class SessionStore {
     /// (ดู `Snapshot.attention` ว่าทำไมต้องเป็นเลขนับ ไม่ใช่ธงบอกสถานะ)
     private var attention = 0
 
+    /// ชนิดของ `Notification` ที่เป็นการ *บอก* ไม่ใช่การ *ขอ*
+    ///
+    /// รายชื่อนี้เป็นบัญชีดำโดยตั้งใจ ไม่ใช่บัญชีขาว — ชนิดใหม่ที่ Claude Code เพิ่มมา
+    /// วันหลังจะได้ท่ารอไว้ก่อน ซึ่งเป็นทางที่ผิดแบบมองเห็น · ทางกลับกันคือคำขอที่หายไป
+    /// เงียบๆ ซึ่งเป็นความผิดพลาดชนิดที่ทั้งโปรเจกต์นี้มีไว้เพื่อไม่ให้เกิด
+    static let quiet: Set<String> = [
+        "auth_success",
+        "agent_completed",
+        "elicitation_complete",
+        "elicitation_response",
+        "quota_auto_resume_fired",
+        "quota_auto_resume_stale",
+        "quota_auto_resume_disabled",
+    ]
+
     public init(toolMap: ToolMap = .default, timings: Timings = Timings(), slotCount: Int = 3) {
         self.toolMap = toolMap
         self.timings = timings
@@ -256,6 +317,10 @@ public final class SessionStore {
         // กลางการเรียกเครื่องมือ, `TeammateIdle` คือเพื่อนร่วมทีมที่ค้างรออยู่
         // ชื่อที่รุ่นเก่าไม่รู้จักก็แค่ไม่เคยยิง ไม่มีใครเสียหาย
         case "Notification", "PermissionRequest", "Elicitation", "TeammateIdle":
+            // แจ้งให้รู้ ≠ ขอให้ทำ · "ล็อกอินสำเร็จ" กับ "งานเสร็จแล้ว" เดินทางมาทาง
+            // เหตุการณ์เดียวกับคำขออนุญาต แต่ไม่มีใครรออะไรจากใคร ท่ารอกับการ์ดแดง
+            // ที่ขึ้นให้เรื่องพวกนี้คือการสอนผู้ใช้ว่าสีแดงเชื่อไม่ได้
+            if Self.quiet.contains(e.notificationType ?? "") { break }
             s.activity = .waiting
             s.stoppedAt = nil
             push(

@@ -20,6 +20,12 @@ public enum Paths {
         stateDir.appendingPathComponent("tools.json")
     }
 
+    /// จังหวะเวลาของท่ามาสคอต — ค่าที่ควรลองปรับได้โดยไม่ต้อง build ใหม่
+    /// รูปแบบไฟล์อยู่ที่ `Timings.load`
+    public static var timingConfig: URL {
+        stateDir.appendingPathComponent("timings.json")
+    }
+
     /// session key ของ claude.ai — credential เต็มบัญชี ต้องเป็น mode 600
     /// อยู่ใต้ state dir ไม่ใช่ใน repo ไหน และไม่เคยผ่าน argv หรือ env
     public static var sessionKey: URL {
