@@ -14,6 +14,8 @@ usage:
   tamaclaude --usage-cache       read statusline JSON on stdin, write the usage cache
   tamaclaude --usage-poll        ask claude.ai for the quota once, write the cache, exit
   tamaclaude --send <json>       send one hand-written event (for testing)
+  tamaclaude --decide allow|deny <id>  answer a permission request the board is holding
+                                 (the id is in ~/.tamaclaude/daemon.log)
 
 --usage-poll:
   reads the claude.ai sessionKey from ~/.tamaclaude/session-key (mode 600, never argv).
@@ -63,6 +65,16 @@ case "--send":
     }
     let ok = SocketClient(path: Paths.socket).send(data)
     exit(ok ? 0 : 1)
+
+case "--decide":
+    // ทางเดียวกับที่บอร์ดใช้ตอบ — มีไว้ทดสอบท่อทั้งเส้นโดยไม่ต้องมีจอ และเป็นทางออก
+    // ให้คนที่บอร์ดหลุดไปกลางคำถาม โดยไม่ต้องรอให้หมดเวลาเอง
+    guard args.count > 2, let verdict = ["allow": true, "deny": false][args[1]] else {
+        fail("--decide needs allow or deny, then the request id")
+    }
+    guard let payload = try? Wire.encoder().encode(Control(decide: args[2], allow: verdict))
+    else { fail("could not encode the decision") }
+    exit(SocketClient(path: Paths.socket).send(payload) ? 0 : 1)
 
 case "--install-hooks":
     do {

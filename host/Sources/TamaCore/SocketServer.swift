@@ -4,17 +4,64 @@ import Foundation
 /// เซิร์ฟเวอร์ Unix socket ที่รับบรรทัด JSON จาก hook
 ///
 /// ใช้ POSIX ตรงๆ เพราะ AF_UNIX คือสิ่งที่ต้องการเป๊ะๆ และ hook ต้องจบเร็วที่สุด
-/// โปรโตคอล: หนึ่งเหตุการณ์ = หนึ่งบรรทัด JSON แล้วปิดสายได้เลย
+/// โปรโตคอล: หนึ่งเหตุการณ์ = หนึ่งบรรทัด JSON · ผู้รับ *อาจ* ตอบกลับหนึ่งบรรทัด
+/// ผ่าน `reply` หรือจะไม่ตอบเลยก็ได้ ซึ่งเป็นกรณีปกติของเหตุการณ์เกือบทั้งหมด
 public final class SocketServer {
     private let path: String
     private let queue = DispatchQueue(label: "tamaclaude.socket")
+    /// คิวของ *สาย* แยกจากคิวของ accept และเป็น concurrent โดยจำเป็น
+    ///
+    /// สายของคำขออนุญาตค้างอยู่ได้เป็นนาทีระหว่างรอคนตอบ ถ้ามันค้างบนคิวเดียวกับที่
+    /// ทุกเหตุการณ์ใช้ร่วมกัน มาสคอตจะหยุดขยับทั้งเครื่องตลอดเวลาที่ยังไม่มีใครตอบ —
+    /// คือฟีเจอร์ที่ทำลายสิ่งที่มันมาช่วยพอดี
+    private let wires = DispatchQueue(
+        label: "tamaclaude.socket.wire", attributes: .concurrent)
     private var listenFD: Int32 = -1
     private var source: DispatchSourceRead?
-    private let onLine: (Data) -> Void
+    private let onLine: (Data, @escaping (Data) -> Void) -> Void
 
-    public init(path: URL, onLine: @escaping (Data) -> Void) {
+    public init(path: URL, onLine: @escaping (Data, @escaping (Data) -> Void) -> Void) {
         self.path = path.path
         self.onLine = onLine
+    }
+
+    /// สายที่ยังเปิดอยู่ของ hook หนึ่งตัว
+    ///
+    /// ตอบได้ครั้งเดียว และ *ตอบหลังสายปิดไปแล้วได้โดยไม่เกิดอะไรขึ้น* — ข้อหลังไม่ใช่
+    /// ความสะดวก แต่เป็นความถูกต้อง: เลข fd ที่ปิดแล้วถูกแจกซ้ำให้สายใหม่ได้ทันที
+    /// การเขียนลงเลขเดิมโดยไม่ตรวจจึงเป็นการส่งคำตอบของคนหนึ่งไปให้อีกคน
+    private final class Conn {
+        private let fd: Int32
+        private let lock = NSLock()
+        private var open = true
+        private var replied = false
+
+        init(fd: Int32) { self.fd = fd }
+
+        func reply(_ payload: Data) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard open, !replied else { return }
+            replied = true
+            var data = payload
+            if data.last != UInt8(ascii: "\n") { data.append(UInt8(ascii: "\n")) }
+            data.withUnsafeBytes { raw in
+                var sent = 0
+                while sent < raw.count {
+                    let n = write(fd, raw.baseAddress!.advanced(by: sent), raw.count - sent)
+                    if n <= 0 { break }
+                    sent += n
+                }
+            }
+        }
+
+        func close() {
+            lock.lock()
+            defer { lock.unlock() }
+            guard open else { return }
+            open = false
+            Darwin.close(fd)
+        }
     }
 
     public enum StartError: Error, CustomStringConvertible {
@@ -90,8 +137,9 @@ public final class SocketServer {
     private func accept() {
         let fd = Darwin.accept(listenFD, nil, nil)
         guard fd >= 0 else { return }
-        queue.async { [weak self] in
-            defer { close(fd) }
+        let conn = Conn(fd: fd)
+        wires.async { [weak self] in
+            defer { conn.close() }
             guard let self else { return }
             var buffer = Data()
             var chunk = [UInt8](repeating: 0, count: 4096)
@@ -103,10 +151,10 @@ public final class SocketServer {
                 while let idx = buffer.firstIndex(of: UInt8(ascii: "\n")) {
                     let line = buffer[buffer.startIndex..<idx]
                     buffer = buffer[buffer.index(after: idx)...]
-                    if !line.isEmpty { self.onLine(Data(line)) }
+                    if !line.isEmpty { self.onLine(Data(line), { conn.reply($0) }) }
                 }
             }
-            if !buffer.isEmpty { self.onLine(Data(buffer)) }  // ไม่มี \n ปิดท้ายก็รับ
+            if !buffer.isEmpty { self.onLine(Data(buffer), { conn.reply($0) }) }
         }
     }
 }
@@ -124,17 +172,30 @@ public final class SocketClient {
     public func send(_ payload: Data, timeout: TimeInterval = 1.0) -> Bool {
         guard let fd = connect(timeout: timeout) else { return false }
         defer { close(fd) }
-        var data = payload
-        if data.last != UInt8(ascii: "\n") { data.append(UInt8(ascii: "\n")) }
-        return data.withUnsafeBytes { raw -> Bool in
-            var sent = 0
-            while sent < raw.count {
-                let n = write(fd, raw.baseAddress!.advanced(by: sent), raw.count - sent)
-                if n <= 0 { return false }
-                sent += n
+        return write(fd, payload)
+    }
+
+    /// ส่งแล้ว *รอ* หนึ่งบรรทัดตอบกลับ — nil เมื่อ daemon ไม่ทำงาน ตอบไม่ทัน หรือสายขาด
+    ///
+    /// ทุกทางที่คืน nil แปลเหมือนกันหมดสำหรับผู้เรียก คือ "ไม่มีคำตอบจากที่นี่ ไปถาม
+    /// ที่อื่น" · ไม่มีทางไหนเลยที่ค้างเกิน `timeout` เพราะ SO_RCVTIMEO เป็นของ kernel
+    /// ไม่ใช่ตัวจับเวลาของเราที่อาจไม่ได้ทำงานถ้าเธรดนี้ถูกบล็อก
+    public func sendAndWait(_ payload: Data, timeout: TimeInterval) -> Data? {
+        guard let fd = connect(timeout: 1.0, receive: timeout) else { return nil }
+        defer { close(fd) }
+        guard write(fd, payload) else { return nil }
+
+        var buffer = Data()
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while buffer.count < 1 << 16 {
+            let n = read(fd, &chunk, chunk.count)
+            if n <= 0 { break }  // 0 = อีกฝั่งปิด, -1 = หมดเวลา — ทั้งคู่คือไม่มีคำตอบ
+            buffer.append(contentsOf: chunk[0..<n])
+            if let idx = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+                return Data(buffer[buffer.startIndex..<idx])
             }
-            return true
         }
+        return buffer.isEmpty ? nil : buffer
     }
 
     public func canConnect() -> Bool {
@@ -143,7 +204,23 @@ public final class SocketClient {
         return true
     }
 
-    private func connect(timeout: TimeInterval) -> Int32? {
+    private func write(_ fd: Int32, _ payload: Data) -> Bool {
+        var data = payload
+        if data.last != UInt8(ascii: "\n") { data.append(UInt8(ascii: "\n")) }
+        return data.withUnsafeBytes { raw -> Bool in
+            var sent = 0
+            while sent < raw.count {
+                let n = Darwin.write(fd, raw.baseAddress!.advanced(by: sent), raw.count - sent)
+                if n <= 0 { return false }
+                sent += n
+            }
+            return true
+        }
+    }
+
+    /// `receive` แยกจาก `timeout` เพราะสองอย่างนี้ตอบคนละคำถาม: การต่อไม่ติดภายในหนึ่ง
+    /// วินาทีแปลว่าไม่มี daemon ส่วนการรอคำตอบเป็นนาทีคือเรื่องปกติของคำขออนุญาต
+    private func connect(timeout: TimeInterval, receive: TimeInterval? = nil) -> Int32? {
         let bytes = Array(path.utf8)
         var addr = sockaddr_un()
         guard bytes.count < MemoryLayout.size(ofValue: addr.sun_path) else { return nil }
@@ -152,11 +229,15 @@ public final class SocketClient {
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
-        var tv = timeval(
-            tv_sec: Int(timeout),
-            tv_usec: Int32((timeout - Double(Int(timeout))) * 1_000_000))
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        func stamp(_ seconds: TimeInterval) -> timeval {
+            timeval(
+                tv_sec: Int(seconds),
+                tv_usec: Int32((seconds - Double(Int(seconds))) * 1_000_000))
+        }
+        var send = stamp(timeout)
+        var recv = stamp(receive ?? timeout)
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &send, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &recv, socklen_t(MemoryLayout<timeval>.size))
 
         let size = socklen_t(MemoryLayout<sockaddr_un>.size)
         let ok = withUnsafePointer(to: &addr) { ptr in

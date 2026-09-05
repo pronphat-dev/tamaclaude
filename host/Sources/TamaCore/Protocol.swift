@@ -316,3 +316,42 @@ extension Snapshot {
         return data
     }
 }
+
+// MARK: - คำขออนุญาตที่รอคำตอบ
+
+/// คำตอบที่เดินทางกลับไปหา hook ที่ค้างรออยู่บนสาย
+public struct Decision: Codable, Equatable, Sendable {
+    public enum Answer: String, Codable, Equatable, Sendable {
+        case allow
+        case deny
+        /// ไม่มีคำตอบจากที่นี่ ให้ Claude Code ถามที่ terminal ตามปกติ
+        ///
+        /// เป็นคำตอบของ *ทุก* ทางที่ไม่ราบรื่น ไม่ใช่กรณีพิเศษที่ต้องจัดการแยก:
+        /// daemon ไม่ได้รัน, บอร์ดไม่ได้ต่อ, ไม่มีใครแตะจอ, เฟิร์มแวร์ส่งของแปลกมา
+        /// — ปลายทางเดียวกันหมดคือคำถามเดิมที่คีย์บอร์ด ซึ่งคือพฤติกรรมก่อนมีฟีเจอร์นี้
+        case ask
+    }
+
+    public var answer: Answer
+
+    public init(_ answer: Answer) { self.answer = answer }
+
+    enum CodingKeys: String, CodingKey {
+        case answer = "d"
+    }
+}
+
+/// คำสั่งถึง daemon ที่ไม่ได้มาจาก hook — ตอนนี้มีเรื่องเดียวคือการตัดสินคำขอ
+///
+/// ฟิลด์ทั้งสองไม่ใช่ optional โดยตั้งใจ: `HookEvent` กับ `Control` วิ่งบนสายเส้นเดียวกัน
+/// และตัวที่ถอดได้จากทุกอย่างจะกลืนของที่ไม่ใช่ของมัน
+public struct Control: Codable, Equatable, Sendable {
+    /// id ของคำขอ ตามที่ daemon แจกไว้
+    public var decide: String
+    public var allow: Bool
+
+    public init(decide: String, allow: Bool) {
+        self.decide = decide
+        self.allow = allow
+    }
+}

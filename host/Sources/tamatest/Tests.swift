@@ -326,13 +326,26 @@ func runAllTests() {
 
         // ติดตั้งครบทุกชื่อ ชี้มาที่ตัวเอง
         let full = try write(
-            "{\"hooks\":{" + HookInstaller.events.map {
-                "\"\($0)\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"\(hook)\"}]}]"
+            "{\"hooks\":{" + HookInstaller.events.map { event in
+                let cap = HookInstaller.timeouts[event].map { ",\"timeout\":\($0)" } ?? ""
+                return "\"\(event)\":[{\"hooks\":[{\"type\":\"command\","
+                    + "\"command\":\"\(hook)\"\(cap)}]}]"
             }.joined(separator: ",") + "}}")
         defer { try? FileManager.default.removeItem(at: full) }
         let ok = HookInstaller.status(binary: mine, at: full)
         equal(ok.isHealthy, true, "every event, pointing here")
         equal(ok.missing.isEmpty, true, "nothing left to add")
+
+        // ครบทุกชื่อ ชี้ถูกที่ แต่ไม่มีเพดานเวลา — รุ่นก่อนที่ยังไม่รู้จักมัน
+        let uncapped = try write(
+            "{\"hooks\":{" + HookInstaller.events.map {
+                "\"\($0)\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"\(hook)\"}]}]"
+            }.joined(separator: ",") + "}}")
+        defer { try? FileManager.default.removeItem(at: uncapped) }
+        let old = HookInstaller.status(binary: mine, at: uncapped)
+        equal(old.missing.isEmpty, true, "an older install has every name")
+        equal(old.timeoutsMatch, false, "but not the ceiling that keeps a hook from hanging")
+        equal(old.isHealthy, false, "so the next launch has something to repair")
 
         // แอปถูกย้าย/อัปเกรด: คำสั่งเดิมยังอยู่ครบ แต่ชี้ไปที่สำเนาที่ไม่มีแล้ว
         let moved = try write(
@@ -341,10 +354,10 @@ func runAllTests() {
                     + "\"command\":\"/Users/x/Downloads/tamaclaude --hook\"}]}]"
             }.joined(separator: ",") + "}}")
         defer { try? FileManager.default.removeItem(at: moved) }
-        let old = HookInstaller.status(binary: mine, at: moved)
-        equal(old.isInstalled, true, "it still knows us")
-        equal(old.matchesBinary, false, "but not this copy of us")
-        equal(old.isHealthy, false, "which is the whole failure, and it is silent")
+        let elsewhere = HookInstaller.status(binary: mine, at: moved)
+        equal(elsewhere.isInstalled, true, "it still knows us")
+        equal(elsewhere.matchesBinary, false, "but not this copy of us")
+        equal(elsewhere.isHealthy, false, "which is the whole failure, and it is silent")
 
         // ติดตั้งจากรุ่นเก่าที่ยังไม่รู้จักชื่อใหม่ — ของเก่ายังทำงาน ของใหม่ไม่เคยมา
         let stale = try write(
@@ -2236,7 +2249,7 @@ func runAllTests() {
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("tama-\(UUID().uuidString).sock")
         let box = Box()
-        let server = SocketServer(path: path) { box.append($0) }
+        let server = SocketServer(path: path) { line, _ in box.append(line) }
         try server.start()
         defer { server.stop() }
 
@@ -2248,6 +2261,61 @@ func runAllTests() {
             path: FileManager.default.temporaryDirectory
                 .appendingPathComponent("nope-\(UUID().uuidString).sock"))
         expect(!dead.send(Data("{}".utf8)), "no daemon means a clean false, not a hang")
+    }
+
+    // ทางกลับของคำตอบเดินบนสายเส้นเดียวกับที่เหตุการณ์วิ่งมา — ไม่มีช่องทางที่สองให้
+    // ต้องจับคู่กันเองทีหลัง และไม่มีสถานะค้างที่ไหนเมื่อฝั่งใดฝั่งหนึ่งหายไปกลางคัน
+    suite("a hook can be answered on the wire it arrived on") {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tama-\(UUID().uuidString).sock")
+        let server = SocketServer(path: path) { line, reply in
+            if String(decoding: line, as: UTF8.self).contains("PermissionRequest") {
+                reply(Data(#"{"d":"allow"}"#.utf8))
+            }
+        }
+        try server.start()
+        defer { server.stop() }
+
+        let answer = SocketClient(path: path).sendAndWait(
+            Data(#"{"hook_event_name":"PermissionRequest","session_id":"s"}"#.utf8),
+            timeout: 3)
+        equal(
+            answer.map { String(decoding: $0, as: UTF8.self) }, #"{"d":"allow"}"#,
+            "the answer comes back down the same wire")
+
+        // ไม่มีใครตอบ = หมดเวลาแล้วเงียบ ไม่ใช่ค้าง · เพดานเป็นของ kernel (SO_RCVTIMEO)
+        // ไม่ใช่ตัวจับเวลาของเรา ซึ่งอาจไม่ได้ทำงานเลยถ้าเธรดนี้ถูกบล็อกอยู่
+        let silence = SocketClient(path: path).sendAndWait(
+            Data(#"{"hook_event_name":"Stop","session_id":"s"}"#.utf8), timeout: 0.3)
+        equal(silence, nil, "a line nobody answers times out on its own")
+
+        let missing = SocketClient(
+            path: FileManager.default.temporaryDirectory
+                .appendingPathComponent("nope-\(UUID().uuidString).sock"))
+        equal(
+            missing.sendAndWait(Data("{}".utf8), timeout: 0.3), nil,
+            "and no daemon at all is that same nil, not a hang")
+    }
+
+    // เงียบคือค่าเริ่มต้น — `ask` ต้องไม่กลายเป็นคำสั่งอะไรทั้งนั้น
+    suite("what the hook prints back to Claude Code") {
+        equal(HookClient.output(for: Decision(.ask)), nil, "ask says nothing at all")
+        expect(
+            HookClient.output(for: Decision(.allow))?
+                .contains(#""permissionDecision":"allow""#) == true,
+            "allow is spelled out")
+        expect(
+            HookClient.output(for: Decision(.deny))?
+                .contains(#""permissionDecision":"deny""#) == true,
+            "so is deny")
+
+        // ต้องเป็น JSON ที่อ่านได้จริง ไม่ใช่ข้อความที่หน้าตาเหมือน JSON — ปลายทางของ
+        // บรรทัดนี้คือ parser ของ Claude Code ไม่ใช่สายตาคน
+        let text = HookClient.output(for: Decision(.allow)) ?? ""
+        let parsed = try? JSONSerialization.jsonObject(with: Data(text.utf8))
+        expect(
+            (parsed as? [String: Any])?["hookSpecificOutput"] != nil,
+            "and it parses, which is the whole point of it")
     }
 
     suite("wifi commands") {

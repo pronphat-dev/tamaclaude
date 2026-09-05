@@ -44,6 +44,14 @@ public enum HookInstaller {
         "SessionEnd",
     ]
 
+    /// เพดานเวลาต่อ hook หนึ่งตัว เขียนลงไฟล์เป็นวินาที
+    ///
+    /// มีอยู่ชื่อเดียว เพราะมีอยู่เหตุการณ์เดียวที่ตั้งใจให้ค้าง · ค่าปริยายของ Claude Code
+    /// สำหรับ hook ชนิดคำสั่งคือ 600 วินาที ซึ่งยาวเกินกว่าจะเป็นตาข่ายรองรับอะไรได้เลย
+    /// ตัวเลขนี้ยาวกว่า `HookClient.decisionWait` พอให้ฝั่งเราได้จบเรื่องเองเสมอ
+    /// และสั้นพอที่ hook ซึ่งพังเกินคาดจะไม่ถ่วง session ไว้เป็นสิบนาที
+    public static let timeouts = ["PermissionRequest": 45]
+
     /// สภาพของ hook ที่ติดตั้งไว้จริง ณ วินาทีนี้ — อ่านอย่างเดียว ไม่แตะไฟล์
     public struct Status: Equatable, Sendable {
         /// ชื่อเหตุการณ์ที่มีคำสั่งของเราอยู่แล้ว (รวมชื่อที่เราเลิกใช้ไปแล้วด้วย)
@@ -52,6 +60,8 @@ public enum HookInstaller {
         public var command: String?
         /// พาธที่ *ควร* ชี้ คือแอปตัวที่กำลังถามอยู่นี้
         public var wanted: String
+        /// เพดานเวลาที่ติดตั้งไว้จริง ต่อเหตุการณ์ — ว่างคือใช้ค่าปริยายของ Claude Code
+        public var timeouts: [String: Int]
 
         /// เคยกดติดตั้งไว้ไหม — เกณฑ์ว่า "ของนี้เป็นของเขาแล้ว" ซึ่งต่างจาก
         /// "เราควรติดตั้งให้เขา" อย่างสิ้นเชิง ดู `repair`
@@ -60,12 +70,25 @@ public enum HookInstaller {
         public var matchesBinary: Bool { command == wanted }
         public var covered: [String] { HookInstaller.events.filter { installed.contains($0) } }
         public var missing: [String] { HookInstaller.events.filter { !installed.contains($0) } }
-        public var isHealthy: Bool { isInstalled && matchesBinary && missing.isEmpty }
+        /// เพดานเวลาที่เราต้องการถูกเขียนไว้ครบไหม
+        ///
+        /// อยู่ในเกณฑ์สุขภาพด้วย ไม่ใช่แค่พาธ: การอัปเกรดที่เพิ่มเพดานเวลาเข้ามาใหม่
+        /// จะไม่มีวันไปถึงไฟล์ของคนที่ติดตั้งไว้ตั้งแต่รุ่นก่อน ถ้าไม่มีใครถือว่ามันผิด
+        public var timeoutsMatch: Bool {
+            HookInstaller.timeouts.allSatisfy { timeouts[$0.key] == $0.value }
+        }
+        public var isHealthy: Bool {
+            isInstalled && matchesBinary && missing.isEmpty && timeoutsMatch
+        }
 
-        public init(installed: Set<String>, command: String?, wanted: String) {
+        public init(
+            installed: Set<String>, command: String?, wanted: String,
+            timeouts: [String: Int] = [:]
+        ) {
             self.installed = installed
             self.command = command
             self.wanted = wanted
+            self.timeouts = timeouts
         }
     }
 
@@ -91,6 +114,7 @@ public enum HookInstaller {
 
         var installed: Set<String> = []
         var found: String?
+        var timeouts: [String: Int] = [:]
         for (event, value) in hooks {
             for entry in value as? [[String: Any]] ?? [] {
                 for hook in entry["hooks"] as? [[String: Any]] ?? [] {
@@ -98,12 +122,14 @@ public enum HookInstaller {
                         c.contains("tamaclaude"), c.contains("--hook")
                     else { continue }
                     installed.insert(event)
+                    if let seconds = hook["timeout"] as? Int { timeouts[event] = seconds }
                     // ตัวแรกที่เจอเป็นตัวแทนทั้งไฟล์ — `install` เขียนพาธเดียวกันทุกที่เสมอ
                     if found == nil { found = c }
                 }
             }
         }
-        return Status(installed: installed, command: found, wanted: wanted)
+        return Status(
+            installed: installed, command: found, wanted: wanted, timeouts: timeouts)
     }
 
     /// ทำให้ hook ที่ *เคยติดตั้งไว้* กลับมาตรงกับแอปตัวนี้ — คืน true เมื่อได้เขียนจริง
@@ -153,6 +179,8 @@ public enum HookInstaller {
 
         var hooks = root["hooks"] as? [String: Any] ?? [:]
         for event in events {
+            var mine: [String: Any] = ["type": "command", "command": command]
+            if let seconds = timeouts[event] { mine["timeout"] = seconds }
             var entries = hooks[event] as? [[String: Any]] ?? []
             let already = entries.contains { entry in
                 let inner = entry["hooks"] as? [[String: Any]] ?? []
@@ -160,22 +188,21 @@ public enum HookInstaller {
                     && ($0["command"] as? String)?.contains("tamaclaude") == true }
             }
             if already {
-                // อัปเดตพาธให้ตรงกับ binary ปัจจุบัน แทนที่จะเพิ่มซ้ำ
+                // เขียนทับรายการของเราทั้งใบ แทนที่จะเพิ่มซ้ำ — พาธและเพดานเวลา
+                // เปลี่ยนได้ทั้งคู่ระหว่างสองรุ่น และของที่ค้างจากรุ่นก่อนไม่ควรรอด
                 entries = entries.map { entry in
                     var entry = entry
                     let inner = (entry["hooks"] as? [[String: Any]] ?? []).map { h -> [String: Any] in
-                        var h = h
-                        if let c = h["command"] as? String,
-                            c.contains("tamaclaude"), c.contains("--hook") {
-                            h["command"] = command
-                        }
-                        return h
+                        guard let c = h["command"] as? String,
+                            c.contains("tamaclaude"), c.contains("--hook")
+                        else { return h }
+                        return mine
                     }
                     entry["hooks"] = inner
                     return entry
                 }
             } else {
-                entries.append(["hooks": [["type": "command", "command": command]]])
+                entries.append(["hooks": [mine]])
             }
             hooks[event] = entries
         }

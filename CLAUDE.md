@@ -83,6 +83,7 @@ swift build                        # debug
 swift run tamatest                 # run the whole test suite
 swift run tamaclaude --daemon --print --no-ble -v   # daemon without bluetooth, prints snapshots
 swift run tamaclaude --send '<json>'                # inject one hand-written hook event
+swift run tamaclaude --decide allow <id>           # answer a permission request without a board
 swift run tamaclaude --usage-poll                   # one quota fetch -> cache, then exit
 swift run tamaclaude --usage-cache < statusline.json  # the statusline pipe, by hand
 swift run tamaclaude --install-statusline           # take over statusLine.command
@@ -191,6 +192,7 @@ look at `out/`. It proves the *design*, not the C renderer.
 | `TamaCore/EventKitCalendars.swift` | the only file that touches EventKit — read-only, and thin enough to have nothing to test |
 | `TamaCore/SessionStore.swift` | all the logic: hook → per-session state → snapshot · `Timings` reads `~/.tamaclaude/timings.json` |
 | `TamaCore/ToolMap.swift` | tool name → `VisualState`, overridable via `~/.tamaclaude/tools.json` |
+| `TamaCore/Risk.swift` | what a glance may not approve — the board offers Allow only for things that can be undone |
 | `TamaCore/HookInstaller.swift` | writes our hooks into `~/.claude/settings.json`, reads back their `Status`, and repairs a stale path at launch |
 | `TamaCore/Text.swift` | strip to the board font's charset, shape Thai, then truncate |
 | `TamaCore/ThaiShaper.swift` | the Thai cluster walk and glyph-variant choice (ADR-0008) |
