@@ -516,6 +516,37 @@ func runAllTests() {
         equal(HookClient.toolInputText(Data("not json".utf8)), nil, "and so does nonsense")
     }
 
+    // คำขอที่ถูกตอบแล้วต้องหยุดรอ · ผลข้างเคียงที่มองไม่เห็นแย่กว่าการ์ดที่ค้าง
+    suite("answering a request stops the session waiting for a hand") {
+        let s = store()
+        s.apply(event("UserPromptSubmit"), now: t0)
+        s.apply(event("PermissionRequest", message: "may I?"), now: t0 + 1)
+        let asking = s.snapshot(now: t0 + 1)
+        equal(asking.sessions.first?.state, .waiting, "the request raises a hand")
+        equal(asking.cards.count, 1, "and a card with it")
+        equal(asking.attention, 1, "and pulls the screen over")
+
+        s.answered("s1", now: t0 + 2)
+        let done = s.snapshot(now: t0 + 6)
+        equal(done.sessions.first?.state, .thinking, "answering puts it back to work")
+        equal(done.cards.count, 0, "and takes the card with it")
+
+        // ตัวจริงของบั๊ก: `attention` ขึ้นตอน *เข้าสู่* สถานะรอคนเท่านั้น · session ที่
+        // ไม่เคยออกจากสถานะนั้นจะไม่เด้งจอให้คำขอใบถัดไปของตัวเอง แล้วใบนั้นก็ไม่มีวัน
+        // อยู่ตรงหน้าให้ใครแตะ — อาการที่เห็นคือ "แตะใบที่สามไม่ติด"
+        s.apply(event("PermissionRequest", message: "and again?"), now: t0 + 7)
+        equal(
+            s.snapshot(now: t0 + 7).attention, 2,
+            "so the next request on the same session is a new event, not a silent one")
+
+        // ใบที่หมดเวลาไม่ผ่านทางนี้ — คำถามย้ายไปที่ terminal ซึ่งแปลว่ายังรอคนอยู่จริง
+        let waited = store()
+        waited.apply(event("PermissionRequest", message: "may I?"), now: t0)
+        equal(
+            waited.snapshot(now: t0 + 1).sessions.first?.state, .waiting,
+            "nobody answered, so the hand stays up")
+    }
+
     // ชื่อที่ daemon จัดการได้ต้องถูกติดตั้งจริง ไม่งั้นมันคือโค้ดที่ไม่มีวันทำงาน
     suite("every event the store answers to is installed") {
         for name in ["Notification", "PermissionRequest", "PermissionDenied", "Elicitation",

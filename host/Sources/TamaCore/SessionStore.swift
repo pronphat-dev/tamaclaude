@@ -374,6 +374,25 @@ public final class SessionStore {
         sessions[id] = s
     }
 
+    /// คำขออนุญาตของ session นี้ถูกตอบไปแล้ว — ไม่มีใครรออะไรจากมันอีก
+    ///
+    /// ต้องมีเพราะ `Daemon.settle` ตอบสายแล้วจบ ส่วนสิ่งที่ *จอ* แสดงอยู่ยังเป็นสถานะ
+    /// ที่ค้างมาจาก `PermissionRequest` · ในการใช้งานจริง `PostToolUse` มักตามมาล้างให้
+    /// แต่ "มักจะ" ไม่ใช่ "เสมอ" — ทางที่ถูกปฏิเสธไม่มี PostToolUse ตามมาสักตัว
+    ///
+    /// และผลข้างเคียงที่มองไม่เห็นแย่กว่าการ์ดที่ค้าง: `attention` ขึ้นตอน session
+    /// *เข้าสู่* สถานะรอคนเท่านั้น (`raisedHand`) · session ที่ไม่เคยออกจากสถานะนั้นเลย
+    /// จะไม่เด้งจอให้คำขอใบถัดไปของตัวเอง แล้วใบนั้นก็ไม่มีวันอยู่ตรงหน้าให้ใครแตะ
+    public func answered(_ sessionId: String, now: Date = Date()) {
+        guard var s = sessions[sessionId] else { return }
+        s.lastActivity = now
+        // ตอบแล้ว Claude เดินต่อ ไม่ว่าคำตอบจะเป็นอนุญาตหรือปฏิเสธ
+        s.activity = .thinking
+        s.stoppedAt = nil
+        sessions[sessionId] = s
+        dismissCards(for: sessionId)
+    }
+
     private func push(_ card: StoredCard) {
         // ใบใหม่สุดอยู่บน และ session หนึ่งมีการ์ดค้างได้ใบเดียว
         cards.removeAll { $0.sessionId != nil && $0.sessionId == card.sessionId }
