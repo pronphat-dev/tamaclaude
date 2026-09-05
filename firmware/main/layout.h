@@ -40,6 +40,14 @@
 #define CT_CARD_MARK_STROKE          2
 #define CT_CARD_MARK_RIGHT           8
 
+#define CT_ASK_H                     78
+#define CT_ASK_TITLE_DY              8
+#define CT_ASK_BUTTON_TOP            36
+#define CT_ASK_BUTTON_H              38
+#define CT_ASK_BUTTON_W              132
+#define CT_ASK_GAP                   44
+#define CT_ASK_BUTTON_INSET          10
+
 #define CT_USAGE_ROW_H               40
 #define CT_USAGE_GAP                 4
 #define CT_USAGE_BAR_H               7

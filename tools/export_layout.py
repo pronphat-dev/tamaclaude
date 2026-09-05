@@ -87,9 +87,9 @@ def build_header() -> str:
         "#include <stdint.h>",
         "",
     ]
-    for section in ("screen", "topbar", "slots", "card", "usage", "stroll", "sky", "rotation",
-                    "touch", "page", "footer", "weather", "crypto", "stocks", "calendar",
-                    "mascot"):
+    for section in ("screen", "topbar", "slots", "card", "ask", "usage", "stroll", "sky",
+                    "rotation", "touch", "page", "footer", "weather", "crypto", "stocks",
+                    "calendar", "mascot"):
         out += _emit_section(section, _raw[section])
         out.append("")
         out += _emit_tables(section, _raw[section])

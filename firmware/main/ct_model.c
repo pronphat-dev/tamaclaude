@@ -133,6 +133,19 @@ bool ct_model_parse(const char *json, int len, ct_snapshot_t *out)
     const cJSON *attention = cJSON_GetObjectItem(root, "a");
     if (cJSON_IsNumber(attention)) tmp.attention = attention->valueint;
 
+    // ไม่มีคีย์นี้ = ไม่มีใครถามอะไรอยู่ ซึ่งเป็นสภาพปกติของเกือบทุกเฟรม
+    // (`present` เป็น false อยู่แล้วจาก ct_model_clear ที่ `tmp` เริ่มมา)
+    const cJSON *ask = cJSON_GetObjectItem(root, "q");
+    if (cJSON_IsObject(ask)) {
+        copy_str(tmp.ask.id, sizeof(tmp.ask.id), cJSON_GetObjectItem(ask, "i"));
+        copy_str(tmp.ask.title, sizeof(tmp.ask.title), cJSON_GetObjectItem(ask, "t"));
+        const cJSON *may = cJSON_GetObjectItem(ask, "a");
+        tmp.ask.may_allow = cJSON_IsNumber(may) && may->valueint != 0;
+        // ไม่มี id = ตอบกลับไม่ได้ ซึ่งแปลว่าปุ่มบนจอจะกดแล้วไม่เกิดอะไรขึ้น
+        // การ์ดที่กดไม่ได้แย่กว่าไม่มีการ์ด เพราะมันบอกว่ามีอะไรให้ทำทั้งที่ไม่มี
+        tmp.ask.present = tmp.ask.id[0] != '\0';
+    }
+
     // "u" เป็น array ของคู่ [percent, วินาทีที่เหลือ] ไม่ใช่ object — คีย์กินไบต์บนสาย
     // ไม่มีคีย์นี้เลย = ยังไม่เคยมีข้อมูลโควตา ซึ่งไม่เหมือนกับ "มีแต่ไม่รู้ค่า"
     const cJSON *usage = cJSON_GetObjectItem(root, "u");

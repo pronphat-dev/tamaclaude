@@ -7,7 +7,8 @@
 //   {"c":"14:32","d":"Mon 27 Jul","o":0,
 //    "s":[{"p":"tamaclaude","s":"building"}],
 //    "n":[{"t":"tamaclaude","b":"allow Bash?","k":"alert"}],"m":0,
-//    "u":[[35,10800],[48,111600]],"a":3}
+//    "u":[[35,10800],[48,111600]],"a":3,
+//    "q":{"i":"A1B2C3D4","t":"Bash: npm test","a":1}}
 #pragma once
 
 #include <stdbool.h>
@@ -20,6 +21,8 @@
 #define CT_BODY_LEN 52
 #define CT_CLOCK_LEN 8
 #define CT_DATE_LEN 16
+// id ของคำขออนุญาต — Mac แจกมาเป็นเลขฐานสิบหกแปดตัว บวกตัวปิดสตริง
+#define CT_ASK_ID_LEN 12
 
 typedef enum {
     CT_CARD_INFO = 0,
@@ -37,6 +40,20 @@ typedef struct {
     char body[CT_BODY_LEN];
     ct_card_kind_t kind;
 } ct_card_t;
+
+// คำขออนุญาตที่ค้างอยู่ — มีได้ทีละใบ (คีย์ "q")
+//
+// บอร์ดไม่ได้ตัดสินอะไรเกี่ยวกับมันเลย มันแค่วาดแล้วรับนิ้ว: `may_allow` มาจาก Mac
+// (`Risk`) และ Mac ตัดสินซ้ำอีกครั้งตอนรับคำตอบกลับ เฟิร์มแวร์ที่ถูกแก้ให้ส่ง allow
+// กับทุกใบจึงเปลี่ยนอะไรไม่ได้ (ADR-0001, ADR-0014)
+typedef struct {
+    bool present;
+    // ต้องส่งกลับไปพร้อมคำตอบ — คำตอบผูกกับ *ใบ* ไม่ใช่แค่คำว่าอนุญาต
+    char id[CT_ASK_ID_LEN];
+    char title[CT_TITLE_LEN];
+    // false = ปุ่มขวาไม่ใช่ Allow แต่เป็นคำบอกว่าต้องไปตอบที่คีย์บอร์ด
+    bool may_allow;
+} ct_ask_t;
 
 // โควตาหนึ่งหน้าต่าง — คู่ [percent, วินาทีที่เหลือ] ที่ daemon ส่งมาใน "u"
 //
@@ -69,6 +86,7 @@ typedef struct {
     // บอร์ดเด้งกลับหน้ามาสคอตเมื่อเลขนี้ *โตขึ้น* เท่านั้น การดูจากสถานะแทนจะทำให้จอถูก
     // กระชากกลับทุก snapshot ตลอดสิบนาทีที่คำขออนุญาตค้างอยู่ จนใช้หน้าอื่นไม่ได้เลย
     int attention;
+    ct_ask_t ask;
 } ct_snapshot_t;
 
 // เดินนาฬิกาถอยหลังไป `secs` วินาที — เรียกจากลูปหลัก ไม่ใช่ตอนรับ snapshot

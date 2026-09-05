@@ -35,6 +35,21 @@ typedef struct {
     lv_obj_t *body;
 } card_t;
 
+// การ์ดคำขออนุญาต — ปุ่มสองใบที่มีช่องว่างคั่นกลาง (ADR-0014)
+//
+// ช่องว่างนั้นไม่ใช่ระยะห่างเพื่อความสวยงาม มันคือที่ที่การแตะพลาดตกลงไปแล้วไม่มีอะไร
+// เกิดขึ้น ซึ่งเป็นผลลัพธ์ที่ถูกของการเล็งไม่แม่นบนจอที่ให้พิกัดคลาดได้ราว 5px
+typedef struct {
+    lv_obj_t *box;
+    lv_obj_t *title;
+    lv_obj_t *deny;
+    lv_obj_t *deny_text;
+    // ปุ่มขวาเปลี่ยนความหมายตามใบ ไม่ใช่ตามค่าตั้ง — Allow เมื่ออนุญาตได้
+    // และ "Keyboard" เมื่อคำขอนั้นต้องไปตอบที่ที่มีข้อความเต็มให้อ่าน
+    lv_obj_t *allow;
+    lv_obj_t *allow_text;
+} ask_t;
+
 typedef struct {
     // ตัวเลขใหญ่ — สิ่งเดียวที่ต้องอ่านออกจากอีกฝั่งห้อง ป้ายเดียว ไม่ทำตัวหนาปลอม:
     // เคยซ้อนป้ายเดิมเยื้อง 1px แทน montserrat ตัวหนาที่ LVGL ไม่มี แต่เส้นที่หนาขึ้น
@@ -112,6 +127,7 @@ static lv_obj_t *s_clock_big, *s_date;
 static lv_obj_t *s_card_more;  // "+N more" ใต้การ์ดใบล่างสุด
 static slot_t s_slots[CT_SLOTS_COUNT];
 static card_t s_cards[CT_MAX_CARDS];
+static ask_t s_ask;
 static usage_row_t s_usage[CT_USAGE_ROWS];
 
 static float s_phase = 0.0f;
@@ -660,6 +676,46 @@ static void build_cards(lv_obj_t *scr)
     lv_obj_add_flag(s_card_more, LV_OBJ_FLAG_HIDDEN);
 }
 
+// ปุ่มหนึ่งใบ — พื้นทึบกับข้อความกลางใบ ไม่มีขอบ ไม่มีมุมโค้ง
+//
+// สิ่งที่ทำให้มันอ่านออกว่าเป็นปุ่มคือ *สี่เหลี่ยมทึบสีเข้มบนพื้นการ์ด* กับคำที่เป็นคำสั่ง
+// ไม่ใช่กรอบ — กรอบ 1px บนจอที่ถูกมองจากมุม 60 องศาหายไปก่อนสีเสมอ
+static lv_obj_t *ask_button(lv_obj_t *parent, int x, lv_obj_t **out_text)
+{
+    lv_obj_t *b = plain_obj(parent, CT_ASK_BUTTON_W, CT_ASK_BUTTON_H);
+    lv_obj_set_pos(b, x, CT_ASK_BUTTON_TOP);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_t *t = plain_label(b, ct_font_text_14(), CT_COL_INK);
+    lv_obj_align(t, LV_ALIGN_CENTER, 0, 0);
+    *out_text = t;
+    return b;
+}
+
+static void build_ask(lv_obj_t *scr)
+{
+    int w = CT_SCREEN_WIDTH - CT_CARD_PAD * 2;
+    lv_obj_t *box = plain_obj(scr, w, CT_ASK_H);
+    lv_obj_set_pos(box, CT_CARD_PAD, CT_CARD_TOP + CT_CARD_PAD);
+    lv_obj_set_style_bg_color(box, ct_color(CT_COL_BG_CARD_ALERT), 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+
+    lv_obj_t *title = plain_label(box, ct_font_text_14(), CT_COL_TEXT);
+    lv_obj_set_width(title, w - CT_CARD_TEXT_INSET);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+    ct_label_set_pos(title, 9, CT_ASK_TITLE_DY);
+
+    lv_obj_t *deny_text = NULL;
+    lv_obj_t *allow_text = NULL;
+    // ปฏิเสธอยู่ซ้าย อนุญาตอยู่ขวา ตลอดไป — ปุ่มที่สลับที่ได้คือปุ่มที่กดผิดได้
+    lv_obj_t *deny = ask_button(box, 0, &deny_text);
+    lv_obj_set_style_bg_color(deny, ct_color(CT_COL_ALERT), 0);
+    lv_label_set_text(deny_text, "Deny");
+    lv_obj_t *allow = ask_button(box, CT_ASK_BUTTON_W + CT_ASK_GAP, &allow_text);
+
+    s_ask = (ask_t){box, title, deny, deny_text, allow, allow_text};
+    lv_obj_add_flag(box, LV_OBJ_FLAG_HIDDEN);
+}
+
 // ขอบซ้าย/ขวาของเนื้อหาในแถว usage — ตรงกับ tools/gen/screen.py:_usage_row
 #define USAGE_X0 (CT_CARD_PAD + 8)
 #define USAGE_X1 (CT_SCREEN_WIDTH - CT_CARD_PAD - 8)
@@ -762,6 +818,7 @@ void ct_ui_init(lv_obj_t *parent, const ct_snapshot_t *frame)
     build_slots(scr);
     build_stroll(scr);
     build_cards(scr);
+    build_ask(scr);
     build_usage(scr);
     build_idle_clock(scr);
     ct_ui_redraw();
@@ -824,21 +881,33 @@ static card_style_t card_style(ct_card_kind_t kind)
 
 // ทั้งการ์ดและโควตามาจาก host ทั้งคู่ ลิงก์หลุดแล้วไม่มีใครรับรองว่ายังจริง — พื้นที่ล่าง
 // จึงว่างทั้งแถบและตกเป็นของนาฬิกา ตรงกับ Screen.shown_{cards,usage}() ใน gen/screen.py
+// คำถามที่มีคนค้างรอคำตอบอยู่จริงชนะทุกอย่างในแถบล่าง (ADR-0014)
+//
+// การ์ดกับโควตาหลบทั้งคู่ ไม่ใช่เบียดกัน — ปุ่มที่ต้องเล็งให้แม่นบนจอที่ให้พิกัดหยาบ
+// ต้องได้ที่เต็มแถบ และของอื่นที่อยู่รอบมันมีแต่จะทำให้นิ้วลงผิดที่
+static bool ask_shown(void)
+{
+    return s_connected && s_frame->ask.present;
+}
+
 static int shown_card_count(void)
 {
+    if (ask_shown()) return 0;
     return s_connected ? s_frame->card_count : 0;
 }
 
 static bool usage_shown(void)
 {
-    return s_frame->has_usage && s_connected;
+    return s_frame->has_usage && s_connected && !ask_shown();
 }
 
 // สิ่งที่แถบบนถามก่อนวาดของของมัน — แถบไม่พูดซ้ำสิ่งที่หน้านี้แสดงใหญ่กว่าอยู่แล้ว
 // ต้องตรงกับ shows_idle_clock/shows_usage_panel ใน tools/gen/screen.py
 bool ct_ui_shows_clock(void)
 {
-    return shown_card_count() == 0 && !usage_shown();
+    // ต้องถาม ask_shown เองด้วย ไม่ใช่พึ่งสองตัวข้างใน — มันกดทั้งคู่ให้เป็นศูนย์/เท็จ
+    // ซึ่งแปลว่า "แถบล่างว่าง" ตามนิยามเดิม แล้วนาฬิกาใหญ่จะไปนั่งทับการ์ดคำถามพอดี
+    return !ask_shown() && shown_card_count() == 0 && !usage_shown();
 }
 
 bool ct_ui_shows_usage(void)
@@ -951,7 +1020,7 @@ static void layout_cards(void)
 
     // พื้นที่ล่างมีผู้ยึดสองราย (การ์ด, โควตา) — ถ้ามีรายใดรายหนึ่ง นาฬิกาใหญ่ต้องหลบ
     // ขึ้นไปอยู่บนแถบ ไม่งั้นนาฬิกาหายจากจอทั้งใบ หรือโผล่ซ้ำสองที่
-    bool taken = n > 0 || usage_shown();
+    bool taken = n > 0 || usage_shown() || ask_shown();
     if (taken) {
         lv_obj_add_flag(s_clock_big, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_date, LV_OBJ_FLAG_HIDDEN);
@@ -1050,6 +1119,26 @@ static void usage_reset_text(const ct_usage_t *u, char *out, size_t cap)
     }
 }
 
+static void layout_ask(void)
+{
+    if (!ask_shown()) {
+        lv_obj_add_flag(s_ask.box, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_remove_flag(s_ask.box, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(s_ask.title, s_frame->ask.title);
+
+    // ปุ่มขวาเป็นสองอย่างในที่เดียวกัน ไม่ใช่ปุ่มที่หายไปเมื่ออนุญาตไม่ได้ — การ์ดที่มี
+    // ปุ่มเดียวบอกแค่ว่าทำอะไรไม่ได้ ส่วนปุ่มที่จางอยู่พร้อมคำว่า Keyboard บอกว่า
+    // เรื่องนี้ต้องใช้คุณจริงๆ ซึ่งเป็นคนละข้อความกัน
+    bool may = s_frame->ask.may_allow;
+    lv_obj_set_style_bg_color(s_ask.allow, ct_color(may ? CT_COL_GOOD : CT_COL_GRAY_DARK), 0);
+    lv_obj_set_style_text_color(s_ask.allow_text,
+                                ct_color(may ? CT_COL_INK : CT_COL_TEXT_DIM), 0);
+    lv_label_set_text(s_ask.allow_text, may ? "Allow" : "Keyboard");
+    lv_obj_align(s_ask.allow_text, LV_ALIGN_CENTER, 0, 0);
+}
+
 static void layout_usage(void)
 {
     // การ์ดชนะโควตาเสมอ — การ์ดคือสิ่งที่ต้องการการกระทำจากผู้ใช้
@@ -1131,6 +1220,7 @@ void ct_ui_redraw(void)
     update_sky();
     layout_slots();
     layout_cards();
+    layout_ask();
     layout_usage();
 }
 
@@ -1144,6 +1234,7 @@ void ct_ui_set_connected(bool connected)
     layout_slots();
     // แผงโควตาเข้า/ออกตามลิงก์ และนาฬิกาใหญ่ต้องกลับลงมายึดพื้นที่ที่มันปล่อยไว้
     layout_cards();
+    layout_ask();
     layout_usage();
     for (int i = 0; i < CT_SLOTS_COUNT; i++) lv_obj_invalidate(s_slots[i].canvas);
     lv_obj_invalidate(s_stroll);
