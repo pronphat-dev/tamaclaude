@@ -107,9 +107,21 @@ bool ct_touch_init(void)
     return true;
 }
 
-// ท่าทางที่เพิ่งจบตอนยกนิ้ว — คืน CT_SWIPE_NONE เมื่อไม่เข้าเกณฑ์ข้อใดข้อหนึ่ง
-static ct_swipe_t finish(void)
+// ADC หนึ่งค่า -> พิกเซลหนึ่งแกน · หยาบโดยธรรมชาติ (ADR-0014) ผู้เรียกต้องออกแบบ
+// เป้าให้ใหญ่พอรับความคลาดราว 5px ที่ขอบไกล
+static int to_px(int adc, int origin, int per_px, int span)
 {
+    int px = (adc - origin) / per_px;
+    if (px < 0) return 0;
+    if (px >= span) return span - 1;
+    return px;
+}
+
+// ท่าทางที่เพิ่งจบตอนยกนิ้ว — ว่างเปล่าเมื่อไม่เข้าเกณฑ์ของอะไรเลย
+static ct_touch_event_t finish(void)
+{
+    ct_touch_event_t out = {.swipe = CT_SWIPE_NONE, .tap = false, .x = 0, .y = 0};
+
     int dh = s_last_h - s_start_h;
     int dv = s_last_v - s_start_v;
     // แปลงเป็นพิกเซลก่อนเทียบสองแกน เพราะความชันของสองแกนไม่เท่ากัน (11 กับ 14 counts/px)
@@ -117,21 +129,39 @@ static ct_swipe_t finish(void)
     int px_h = (dh < 0 ? -dh : dh) / CT_TOUCH_COUNTS_PER_PX_H;
     int px_v = (dv < 0 ? -dv : dv) / CT_TOUCH_COUNTS_PER_PX_V;
 
+    // แตะมาก่อน เพราะเกณฑ์ของมันแคบกว่าและไม่ทับกับของการปัดเลย — นิ้วที่ขยับเกิน
+    // tap_max_px แต่ไม่ถึง swipe_min_px ไม่ใช่ทั้งสองอย่าง และไม่ควรกลายเป็นอย่างใด
+    // อย่างหนึ่งเพราะบังเอิญถูกถามก่อน
+    if (s_down_ms <= CT_TOUCH_TAP_MAX_MS
+        && px_h <= CT_TOUCH_TAP_MAX_PX && px_v <= CT_TOUCH_TAP_MAX_PX) {
+        out.tap = true;
+        out.x = to_px(s_start_h, CT_TOUCH_H_ORIGIN, CT_TOUCH_COUNTS_PER_PX_H, CT_SCREEN_WIDTH);
+        out.y = to_px(s_start_v, CT_TOUCH_V_ORIGIN, CT_TOUCH_COUNTS_PER_PX_V, CT_SCREEN_HEIGHT);
+        return out;
+    }
+
     // สัมผัสที่ค้างอยู่นานเกินคนปัด = ของที่วางทับจอ ไม่ใช่ท่าทาง — ตอนหยิบออกมันขยับ
-    if (s_down_ms > CT_TOUCH_SWIPE_MAX_MS) return CT_SWIPE_NONE;
-    if (px_h < CT_TOUCH_SWIPE_MIN_PX) return CT_SWIPE_NONE;
+    if (s_down_ms > CT_TOUCH_SWIPE_MAX_MS) return out;
+    if (px_h < CT_TOUCH_SWIPE_MIN_PX) return out;
     // การลากที่เอียงจนแกนตั้งชนะคือท่าทางอื่นที่จอนี้ไม่รับ ไม่ใช่การปัดที่มือไม่ตรง
-    if (px_v >= px_h) return CT_SWIPE_NONE;
-    return dh < 0 ? CT_SWIPE_LEFT : CT_SWIPE_RIGHT;
+    if (px_v >= px_h) return out;
+    out.swipe = dh < 0 ? CT_SWIPE_LEFT : CT_SWIPE_RIGHT;
+    return out;
 }
 
 ct_swipe_t ct_touch_poll(int elapsed_ms)
 {
-    if (!s_present) return CT_SWIPE_NONE;
+    return ct_touch_poll_event(elapsed_ms).swipe;
+}
+
+ct_touch_event_t ct_touch_poll_event(int elapsed_ms)
+{
+    const ct_touch_event_t none = {.swipe = CT_SWIPE_NONE, .tap = false, .x = 0, .y = 0};
+    if (!s_present) return none;
 
     if (s_down) s_down_ms += elapsed_ms;
     s_since_poll += elapsed_ms;
-    if (s_since_poll < CT_TOUCH_POLL_MS) return CT_SWIPE_NONE;
+    if (s_since_poll < CT_TOUCH_POLL_MS) return none;
     s_since_poll = 0;
 
     // แรงกดที่วัดได้ตอนแตะจริงอยู่ที่ 260-1570 — ค่าที่ทะลุ CT_TOUCH_Z_MAX ขึ้นไปคือ
@@ -139,10 +169,10 @@ ct_swipe_t ct_touch_poll(int elapsed_ms)
     uint16_t z = median3(T_CMD_Z1);
     if (z <= CT_TOUCH_Z_MIN || z >= CT_TOUCH_Z_MAX) {
         s_press_run = 0;
-        if (!s_down) return CT_SWIPE_NONE;
+        if (!s_down) return none;
         // แรงกดตกต่ำกว่าเกณฑ์ชั่วขณะระหว่างลากเร็วๆ เกิดขึ้นได้บนจอ resistive — จบท่าทาง
         // ที่ตัวอย่างเดียวแปลว่าการปัดครั้งเดียวถูกอ่านเป็นสองครึ่งที่สั้นเกินเกณฑ์ทั้งคู่
-        if (++s_release_run < CT_TOUCH_PRESS_SAMPLES) return CT_SWIPE_NONE;
+        if (++s_release_run < CT_TOUCH_PRESS_SAMPLES) return none;
         s_down = false;
         return finish();
     }
@@ -156,7 +186,7 @@ ct_swipe_t ct_touch_poll(int elapsed_ms)
     if (!s_down) {
         // นิ้วที่เพิ่งแตะยังไม่ใช่นิ้ว จนกว่าจะเห็นติดกันหลายครั้ง — ตัวอย่างเดียวที่กระโดด
         // ขึ้นมาแล้วหายไปคือ noise ซึ่งจะกลายเป็นจุดเริ่มของการลากที่ผิดที่
-        if (++s_press_run < CT_TOUCH_PRESS_SAMPLES) return CT_SWIPE_NONE;
+        if (++s_press_run < CT_TOUCH_PRESS_SAMPLES) return none;
         s_down = true;
         s_down_ms = 0;
         s_start_h = h;
@@ -164,5 +194,5 @@ ct_swipe_t ct_touch_poll(int elapsed_ms)
     }
     s_last_h = h;
     s_last_v = v;
-    return CT_SWIPE_NONE;
+    return none;
 }

@@ -196,6 +196,10 @@ static const int16_t ct_sky_bolt[CT_SKY_BOLT_COUNT][4] = {
 #define CT_TOUCH_SWIPE_MIN_PX        60
 #define CT_TOUCH_SWIPE_MAX_MS        1500
 #define CT_TOUCH_POLL_MS             50
+#define CT_TOUCH_H_ORIGIN            206
+#define CT_TOUCH_V_ORIGIN            325
+#define CT_TOUCH_TAP_MAX_PX          12
+#define CT_TOUCH_TAP_MAX_MS          700
 
 #define CT_PAGE_STALE_FACTOR         10
 
