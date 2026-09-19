@@ -231,6 +231,26 @@ SCENES: dict[str, screen.Screen] = {
             screen.Card("needs permission to write layout.h", "", "info"),
         ],
     ),
+    # คำถามกินแถบการ์ดทั้งแถบ — ฉากนี้จึงมีทั้งการ์ดและโควตาค้างอยู่ *โดยตั้งใจ*
+    # ภาพที่ออกมาต้องไม่มีทั้งสองอย่าง ซึ่งเป็นสิ่งเดียวที่พิสูจน์ว่ากองการ์ดหลบจริง
+    # ไม่ใช่บังเอิญไม่มีอะไรจะวาด · แถบบนยังมีเปอร์เซ็นต์อยู่ เพราะแผงเต็มหลบ ไม่ใช่ตัวเลขหาย
+    "ask": screen.Screen(
+        sessions=[screen.Session("tamaclaude", "waiting", 0.0)],
+        clock="11:20",
+        ask=screen.Ask("Bash: npm test"),
+        cards=[screen.Card("sprite-gen", "Build finished, 0 warnings", "done")],
+        usage=[
+            screen.Usage("Current", SESSION_WINDOW, 35, 3 * 3600 + 5 * 60),
+            screen.Usage("Weekly", WEEKLY_WINDOW, 48, 31 * 3600),
+        ],
+    ),
+    # คำสั่งที่ `Risk` ฝั่ง Mac ไม่ยอมให้นิ้วเดียวอนุมัติ — ปุ่มขวาไม่ได้หายไป มันเปลี่ยนเป็น
+    # คำที่บอกว่าเรื่องนี้ต้องใช้คุณจริงๆ · การ์ดที่มีปุ่มเดียวบอกแค่ว่าทำอะไรไม่ได้
+    "ask_keyboard": screen.Screen(
+        sessions=[screen.Session("tamaclaude", "waiting", 0.0)],
+        clock="11:21",
+        ask=screen.Ask("Bash: rm -rf build", may_allow=False),
+    ),
 }
 
 

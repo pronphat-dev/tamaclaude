@@ -199,6 +199,24 @@ class Card:
 
 
 @dataclass(slots=True)
+class Ask:
+    """คำขออนุญาตที่มีคนค้างรอคำตอบอยู่จริง — ตรงกับ `ct_ask_t` ใน firmware/main/ct_model.h
+
+    ไม่มี `id` ทั้งที่บนสายมี: id มีไว้ให้คำตอบเดินทางกลับถูกคำถาม ไม่ได้มีไว้ให้วาด
+    ภาพที่ออกมาจึงเหมือนกันทุกประการไม่ว่า id จะเป็นอะไร
+
+    `may_allow` เป็นคำตัดสินของ `Risk` ฝั่ง Mac ไม่ใช่ของบอร์ด (ADR-0001) — ที่นี่แค่
+    วาดตาม เหมือนที่ `layout_ask()` แค่ทาสีตาม
+    """
+
+    title: str
+    may_allow: bool = True
+
+    def __post_init__(self) -> None:
+        _drawable_only(title=self.title)
+
+
+@dataclass(slots=True)
 class Usage:
     """หนึ่งหน้าต่างโควตา — ตรงกับ `rate_limits.five_hour` / `.seven_day` ที่ Claude Code ป้อน
 
@@ -238,12 +256,22 @@ class Screen:
     cards: list[Card] = field(default_factory=list)
     # การ์ดที่มีอยู่จริงแต่ไม่ได้ส่ง/วาดไม่พอ — daemon นับมาให้ (คีย์ "m" บนสาย)
     card_overflow: int = 0
+    # คำถามที่ค้างอยู่ — None คือไม่มีใครรออะไรจากคนตรงหน้าจอ (คีย์ "q" บนสาย)
+    ask: Ask | None = None
     # None = ไม่เคยได้ข้อมูลเลย -> ถอยไปเป็นนาฬิกาตั้งโต๊ะ ไม่ใช่โครงเปล่าที่ดูเหมือนพัง
     usage: list[Usage] | None = None
     # รหัส WMO ของสภาพอากาศตอนนี้ — **ไม่ได้มากับ snapshot** แต่มาจากเฟรมของหน้าอากาศ
     # ที่บอร์ดแคชไว้ (ADR-0012) · None = ยังไม่เคยได้เฟรม / ผู้ใช้ปิดหน้าอากาศ / เฟรม
     # เก่าเกิน 2.5 ชม. — ทั้งสามได้ฟ้าตามเวลาแบบเดิม ตรงกับ `ct_ui_set_weather(_, false)`
     weather_code: int | None = None
+
+    def shown_ask(self) -> Ask | None:
+        """คำถามที่มีสิทธิ์ขึ้นจอ — ต้องตรงกับ `ask_shown()` ใน firmware/main/ct_ui.c
+
+        ลิงก์หลุดแล้วไม่มีคำถาม ด้วยเหตุผลที่หนักกว่าการ์ดกับโควตา: การ์ดที่ค้างอยู่คือ
+        ข่าวเก่าที่ไม่มีใครรับรอง ส่วนปุ่มที่ค้างอยู่คือปุ่มที่กดแล้วคำตอบไม่มีทางถึงใคร
+        """
+        return self.ask if self.connected else None
 
     def shown_cards(self) -> list[Card]:
         """การ์ดที่มีสิทธิ์ขึ้นจอ — ลิงก์หลุดแล้วเหลือศูนย์ใบ ดูที่ shown_usage()"""
@@ -553,6 +581,45 @@ def _cards(draw: ImageDraw.ImageDraw, cards: list[Card], overflow: int) -> None:
                   font=font(11), fill=quantize565(PAL.text_dim), anchor="rm")
 
 
+def _ask_button(draw: ImageDraw.ImageDraw, x: int, y: int, *,
+                plate: str, label: str, ink: str) -> None:
+    draw.rectangle([x, y, x + L.ask.button_w - 1, y + L.ask.button_h - 1],
+                   fill=quantize565(plate))
+    # กลางปุ่มทั้งสองแกน — ตรงกับ `lv_obj_align(t, LV_ALIGN_CENTER, 0, 0)` ใน ask_button()
+    line(draw, (x + L.ask.button_w / 2, y + L.ask.button_h / 2), label,
+         pil=12, board=14, fill=ink, anchor="mm",
+         max_w=L.ask.button_w - L.ask.button_inset * 2)
+
+
+def _ask(draw: ImageDraw.ImageDraw, a: Ask) -> None:
+    """การ์ดคำขออนุญาต — ต้องตรงกับ build_ask()/layout_ask() ใน firmware/main/ct_ui.c
+
+    ช่องว่างกลางไม่ได้ถูกวาด แต่มันคือส่วนที่สำคัญที่สุดของภาพนี้: การแตะที่ตกลงตรงนั้น
+    ต้องไม่ทำอะไรเลย (ADR-0014) พรีวิวจึงต้องแสดงมันตามขนาดจริง ไม่ใช่ขยับปุ่มให้ดูสวย
+    """
+    # กว้างเท่ากองการ์ด ไม่ใช่เต็มจอ — มันยึด *ที่ของการ์ด* ทั้งแถบ ไม่ได้เป็นของใหม่ที่อื่น
+    # ข้อความจึงกว้างเท่าหัวการ์ด (CARD_TEXT_W) พอดี ไม่ใช่เลขที่บังเอิญเท่ากัน — เพดาน
+    # `Text.Limit.cardTitle` ฝั่ง Swift จึงคุมบรรทัดนี้อยู่แล้ว ไม่ต้องมีเพดานตัวที่สอง
+    pad = L.card.pad
+    y = L.card.top + pad
+    draw.rectangle([pad, y, L.screen.width - pad - 1, y + L.ask.h - 1],
+                   fill=quantize565(PAL.bg_card_alert))
+    # บรรทัดคำถามอยู่ระดับเดียวกับหัวการ์ดปกติ — tx เดียวกับ _card()
+    line(draw, (pad + 9, y + L.ask.title_dy), a.title, pil=12, board=14,
+         fill=PAL.text, anchor="lt", max_w=CARD_TEXT_W)
+
+    by = y + L.ask.button_top
+    # ปฏิเสธซ้าย อนุญาตขวา ตลอดไป — ปุ่มที่สลับที่ได้คือปุ่มที่กดผิดได้
+    _ask_button(draw, pad, by, plate=PAL.alert, label="Deny", ink=PAL.ink)
+    # ปุ่มขวาเป็นสองอย่างในที่เดียวกัน ไม่ใช่ปุ่มที่หายไปเมื่ออนุญาตไม่ได้
+    if a.may_allow:
+        _ask_button(draw, pad + L.ask.button_w + L.ask.gap, by,
+                    plate=PAL.good, label="Allow", ink=PAL.ink)
+    else:
+        _ask_button(draw, pad + L.ask.button_w + L.ask.gap, by,
+                    plate=PAL.gray_dark, label="Keyboard", ink=PAL.text_dim)
+
+
 def fmt_remaining(secs: int | None) -> str:
     """วินาทีที่เหลือ -> ข้อความสั้นที่สุดที่ยังบอกได้ว่าควรรีบไหม
 
@@ -723,7 +790,7 @@ def shows_idle_clock(s: Screen) -> bool:
 
     ต้องตรงกับ `ct_ui_shows_clock` ใน firmware/main/ct_ui.c
     """
-    return not s.shown_cards() and not s.shown_usage()
+    return not s.shown_ask() and not s.shown_cards() and not s.shown_usage()
 
 
 def shows_usage_panel(s: Screen) -> bool:
@@ -731,7 +798,7 @@ def shows_usage_panel(s: Screen) -> bool:
 
     ต้องตรงกับ `ct_ui_shows_usage` ใน firmware/main/ct_ui.c
     """
-    return bool(s.shown_usage()) and not s.shown_cards()
+    return bool(s.shown_usage()) and not s.shown_cards() and not s.shown_ask()
 
 
 def _bar(s: Screen) -> topbar.Bar:
@@ -758,9 +825,12 @@ def render(s: Screen, phase: float = 0.0, cycle: int = 0,
         _stroll(draw, s, phase, cycle)
     for i in range(n):
         _slot(draw, i, s.sessions[i], s, phase, cycle, n)
-    # ลำดับความสำคัญของพื้นที่ล่าง: การเตือน > โควตา > นาฬิกา
-    # โควตาไม่เคยชนะ card เพราะ card คือสิ่งที่ต้องการการกระทำจากผู้ใช้
-    if cards := s.shown_cards():
+    # ลำดับความสำคัญของพื้นที่ล่าง: คำถาม > การเตือน > โควตา > นาฬิกา
+    # โควตาไม่เคยชนะ card เพราะ card คือสิ่งที่ต้องการการกระทำจากผู้ใช้ · และคำถามชนะ
+    # card ด้วยเหตุผลที่แรงกว่า: การ์ดบอกว่ามีอะไรเกิดขึ้น ส่วนคำถามมีคนหยุดรออยู่ปลายทาง
+    if ask := s.shown_ask():
+        _ask(draw, ask)
+    elif cards := s.shown_cards():
         _cards(draw, cards, s.card_overflow)
     elif usage := s.shown_usage():
         _usage(draw, usage)
