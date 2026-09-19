@@ -29,6 +29,51 @@ if [ ! -f Resources/AppIcon.icns ]; then
     python3 "$REPO/tools/make_icon.py"
 fi
 
+# SDK ที่บิลด์ SwiftUI ได้จริง — ไม่ใช่ตัวที่ใหม่ที่สุดเสมอไป
+#
+# ตั้งแต่ SDK 27 SwiftUI ประกาศ `@State` เป็น macro ซึ่งต้องใช้ปลั๊กอิน
+# `libSwiftUIMacros.dylib` ที่มากับ Xcode.app เท่านั้น ไม่ได้มากับ Command Line Tools
+# เครื่องที่มีแต่ CLT จึงบิลด์ไฟล์ SwiftUI ไม่ผ่านทั้งไฟล์ โดยได้ error เป็นร้อยบรรทัด
+# ที่ไม่มีบรรทัดไหนเอ่ยถึงปลั๊กอินที่หายไปเลย
+#
+# ทางออกคือ SDK เก่ากว่าที่ยังประกาศ `@State` เป็น property wrapper — และเรา *ถาม* เอา
+# ไม่ได้เดา: ให้คอมไพเลอร์ typecheck ไฟล์สามบรรทัดดูตรงๆ · การ grep หา "macro State()"
+# ใช้ไม่ได้ เพราะคำประกาศอยู่ใน .swiftmodule ที่เป็นไบนารี ไม่ใช่ข้อความ
+#
+# `SDKROOT` ที่ผู้ใช้ตั้งมาเองไม่ถูกแตะ — คนที่ชี้ SDK เองรู้ว่ากำลังทำอะไรอยู่
+if [ -z "${SDKROOT:-}" ]; then
+    PROBE_DIR="$(mktemp -d)"
+    trap 'rm -rf "$PROBE_DIR"' EXIT
+    cat > "$PROBE_DIR/probe.swift" <<'PROBE'
+import SwiftUI
+struct Probe: View {
+    @State private var n = 0
+    var body: some View { EmptyView() }
+}
+PROBE
+    probe() { swiftc -sdk "$1" -typecheck "$PROBE_DIR/probe.swift" >/dev/null 2>&1; }
+
+    if ! probe "$(xcrun --show-sdk-path)"; then
+        # ไล่จากใหม่ไปเก่า แล้วหยุดที่ตัวแรกที่ผ่าน — ใหม่ที่สุดเท่าที่ยังบิลด์ได้
+        for sdk in $(ls -d "$(xcode-select -p)"/SDKs/MacOSX*.sdk 2>/dev/null | sort -Vr || true); do
+            probe "$sdk" || continue
+            export SDKROOT="$sdk"
+            # บอกทุกรอบที่มันเลือกเอง · การหยิบ SDK อื่นมาใช้เงียบๆ คือสถานะซ่อนที่จะ
+            # กลายเป็นปริศนาในวันที่มีอะไรพังด้วยเหตุผลที่เกี่ยวกับเวอร์ชัน SDK พอดี
+            echo "sdk: $(basename "$sdk") — this toolchain has no SwiftUIMacros plugin" \
+                 "(only Xcode.app ships one), so the newest SDK cannot compile @State"
+            break
+        done
+    fi
+
+    if [ -z "${SDKROOT:-}" ] && ! probe "$(xcrun --show-sdk-path)"; then
+        echo "no SDK on this machine builds SwiftUI with the current toolchain." >&2
+        echo "install Xcode.app, then:" >&2
+        echo "  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
+        exit 1
+    fi
+fi
+
 swift build -c "$CONFIG"
 BIN="$(swift build -c "$CONFIG" --show-bin-path)/tamaclaude"
 APP="dist/TamaClaude.app"

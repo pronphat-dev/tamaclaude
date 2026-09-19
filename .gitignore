@@ -11,3 +11,6 @@ __pycache__/
 # อยู่ในคอมเมนต์ข้างโค้ดกับ git log แล้ว
 .impeccable/
 COMMIT_MSG.txt
+
+# โฟลเดอร์ที่แอป Claude วางไฟล์ที่มันส่งให้ดู — ไม่ใช่ของโปรเจกต์
+Claude outputs/

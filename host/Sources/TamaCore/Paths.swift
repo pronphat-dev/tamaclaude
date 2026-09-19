@@ -79,10 +79,34 @@ public enum Log {
 
     private static let lock = NSLock()
 
+    /// เวลาหน้าบรรทัด — ของไฟล์เท่านั้น ไม่ใช่ของ stderr
+    ///
+    /// คนที่ดู stderr ดูสดๆ อยู่แล้ว เวลาที่ติดมากับทุกบรรทัดจึงเป็นแค่เสียงรบกวน ส่วนไฟล์
+    /// ถูกอ่านทีหลังเสมอ และคำถามแรกของคนที่เปิดมันคือ "บรรทัดนี้เมื่อไหร่" ซึ่งเมื่อก่อน
+    /// ตอบไม่ได้เลย · แย่กว่านั้น ไฟล์ถูกลบทั้งก้อนเมื่อโตเกิน 1MB ช่วงเวลาที่มันครอบคลุม
+    /// จึงเดาจากขนาดหรืออายุไฟล์ไม่ได้ด้วย
+    ///
+    /// เวลาท้องถิ่น ไม่ใช่ UTC — คนที่อ่านไฟล์นี้นั่งอยู่หน้าเครื่องเดียวกับที่เขียนมัน
+    ///
+    /// `yyyy` ไม่ใช่ `YYYY` · `YYYY` คือปีของ *สัปดาห์* ซึ่งต่างกันปีละไม่กี่วันรอบปีใหม่
+    /// และเป็นวันที่ไม่มีใครนั่งอ่าน log — บั๊กแบบนี้รอดไปได้เป็นปีก่อนจะมีคนเห็น
+    private static let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
+
+    /// เวลาที่จะไปอยู่หน้าบรรทัดในไฟล์ — แยกออกมาให้เทสต์จับรูปแบบได้
+    public static func stamp(_ date: Date = Date()) -> String { clock.string(from: date) }
+
     public static func info(_ msg: @autoclosure () -> String) {
         let line = "[tamaclaude] \(msg())\n"
         FileHandle.standardError.write(Data(line.utf8))
         guard toFile else { return }
+        // จับเวลาตอน *เกิดเหตุ* ไม่ใช่ตอนได้คิวเขียน — บรรทัดที่รอ lock อยู่คือบรรทัดที่
+        // มีอะไรเกิดขึ้นพร้อมกันหลายอย่าง ซึ่งเป็นตอนที่ลำดับเวลามีความหมายที่สุดพอดี
+        let stamped = "\(stamp()) \(line)"
         lock.lock()
         defer { lock.unlock() }
         let url = Paths.log
@@ -93,10 +117,10 @@ public enum Log {
         }
         if let handle = try? FileHandle(forWritingTo: url) {
             handle.seekToEndOfFile()
-            handle.write(Data(line.utf8))
+            handle.write(Data(stamped.utf8))
             try? handle.close()
         } else {
-            try? Data(line.utf8).write(to: url)
+            try? Data(stamped.utf8).write(to: url)
         }
     }
 

@@ -466,6 +466,25 @@ func runAllTests() {
             "no file at all is the default, not a crash")
     }
 
+    // ไฟล์ log ถูกอ่านทีหลังเสมอ บรรทัดที่ไม่มีเวลาจึงตอบคำถามแรกของคนอ่านไม่ได้
+    suite("a line in the log file says when it happened") {
+        // 29 ธ.ค. 2025 เป็นวันจันทร์แรกของสัปดาห์ที่ 1 ปี 2026 — `YYYY` ที่พิมพ์ผิดเป็น
+        // `yyyy` จะตอบ 2026 ตรงนี้ และตอบถูกตลอดทั้งปีที่เหลือ เทสต์ที่ใช้วันอื่นจับไม่ได้
+        let newYear = Date(timeIntervalSince1970: 1_767_009_600)  // 2025-12-29 12:00 UTC
+        let text = Log.stamp(newYear)
+        // ไม่ล็อกถึงวัน: เที่ยง UTC ของวันนั้นเป็นวันที่ 29 หรือ 30 แล้วแต่โซนเวลาของเครื่อง
+        // ที่รันเทสต์ · สิ่งที่เทสต์นี้จับคือ *ปี* ซึ่งไม่ขยับตามโซนเลย
+        expect(text.hasPrefix("2025-12-"),
+               "the calendar year, not the week year — got \(text)")
+        equal(text.count, 19, "one fixed width, so the lines still read as columns")
+
+        // ท้องถิ่น ไม่ใช่ UTC — คนอ่านนั่งอยู่หน้าเครื่องเดียวกับที่เขียน
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        equal(Log.stamp(newYear), f.string(from: newYear), "written in the machine's own time")
+    }
+
     // ปุ่มเขียวบนจอที่ถูกเหลือบมอง ไม่ใช่ที่ของคำสั่งที่กดผิดแล้วไม่มีปุ่ม undo
     suite("what the board may not approve for you") {
         func board(_ tool: String, _ input: String?) -> Bool {

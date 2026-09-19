@@ -161,6 +161,12 @@ git clone https://github.com/thaitop/tamaclaude.git
 cd tamaclaude
 ```
 
+Command Line Tools is enough. On a Mac whose newest SDK is 27 or later, `@State` is a
+macro there, and the plugin that expands it ships only inside Xcode.app — so `make-app.sh`
+probes the SDKs it can see and builds against the newest one that still compiles SwiftUI,
+saying out loud which one it picked. If none of them can, it says so and names Xcode
+rather than letting the compiler bury the reason under a hundred lines of macro errors.
+
 ## 2. Put the firmware on the board
 
 Plug the board in and put its serial port into a variable, so the commands below work
