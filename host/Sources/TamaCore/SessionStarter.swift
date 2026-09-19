@@ -268,6 +268,23 @@ public enum SessionProcess {
         return .failed
     }
 
+    /// สิ่งที่ลูกบ่นก่อนตาย ย่อให้พอดีหนึ่งบรรทัดของ log
+    ///
+    /// `.failed` แปลว่า "แยกไม่ออก" ซึ่งเป็นคำตอบที่ถูกสำหรับ *กติกา* — รอบเดียวที่ล้มไม่ควร
+    /// ปิดฟีเจอร์ทิ้ง · แต่มันไม่ใช่คำตอบที่ถูกสำหรับ *คนอ่าน log* ที่เห็นบรรทัดเดิมซ้ำทุกห้านาที
+    /// แล้วไม่มีอะไรให้ไล่ต่อ · ข้อความมีอยู่แล้วตอนนั้น การทิ้งไปคือการเลือกที่จะไม่บอก
+    ///
+    /// บรรทัด *ท้าย* ไม่ใช่บรรทัดแรก: สอง stream รวมอยู่ใน pipe เดียว และคำบ่นตอนตาย
+    /// มาหลังอะไรก็ตามที่พิมพ์ไปก่อนแล้ว
+    public static func complaint(_ text: String, limit: Int = 160) -> String? {
+        let last = text
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .last(where: { !$0.isEmpty })
+        guard let last, !last.isEmpty else { return nil }
+        return last.count <= limit ? last : String(last.prefix(limit)) + "…"
+    }
+
     /// `-p` = one-shot print mode: ไม่มี TTY ไม่มีหน้าต่าง Terminal โผล่ ลูกจบเอง
     ///
     /// `haiku` เพราะหน้าต่าง 5 ชั่วโมงนับรวมทุกโมเดล (เฉพาะ `weekly_scoped` ที่แยกตามโมเดล)
@@ -313,7 +330,11 @@ public enum SessionProcess {
                 ) { code in
                     output.drain(pipe)
                     let outcome = classify(code: code, output: output.text)
-                    Log.info("auto-start: the session ended with code \(code) (\(outcome))")
+                    // รอบที่สำเร็จไม่ต้องพก "ok" ที่มันตอบกลับมาติด log ไปด้วย
+                    let why = outcome == .ok
+                        ? "" : (complaint(output.text).map { " — \($0)" } ?? "")
+                    Log.info(
+                        "auto-start: the session ended with code \(code) (\(outcome))\(why)")
                     DispatchQueue.main.async { done(outcome) }
                 }
             } catch {

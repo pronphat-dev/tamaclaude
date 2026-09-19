@@ -1966,6 +1966,16 @@ func runAllTests() {
         equal(SessionProcess.classify(code: 143, output: ""), .failed,
               "a child we killed ourselves has nothing to confess")
 
+        // `.failed` ตัวเดียวกันทุกครั้ง — สิ่งที่แยกมันออกจากกันสำหรับคนอ่าน log คือคำบ่น
+        equal(SessionProcess.complaint("Error: ENOENT missing config\n"),
+              "Error: ENOENT missing config", "what the child said last is what we log")
+        equal(SessionProcess.complaint("ok\nfetch failed\n\n   \n"), "fetch failed",
+              "trailing blank lines are not the child's last word")
+        expect(SessionProcess.complaint("   \n\n") == nil,
+               "a child that died quietly adds nothing to the line")
+        equal(SessionProcess.complaint(String(repeating: "x", count: 300), limit: 8),
+              "xxxxxxxx…", "a stack trace does not get to own the log line")
+
         // ผู้ใช้ที่ติดตั้งไว้ที่แปลกๆ ชี้เองได้ และค่าที่ชี้ *แทนที่* รายการ ไม่ใช่ถูกเติมท้าย
         let searched = ClaudeBinary.candidates(override: "/somewhere/odd/claude")
         equal(searched.map(\.path), ["/somewhere/odd/claude"],
