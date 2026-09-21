@@ -79,6 +79,7 @@ public enum PanelText {
         switch blocked {
         case .noBinary: return "Cannot start sessions — claude was not found"
         case .notLoggedIn: return "Cannot start sessions — claude is not logged in"
+        case .keepsFailing(let n): return "Stopped starting sessions — \(n) tries failed"
         case nil: return nil
         }
     }
@@ -96,6 +97,11 @@ public enum PanelText {
                 + "\n\ndefaults write com.tamaclaude.daemon \(ClaudeBinary.overrideKey) <path>"
         case .notLoggedIn:
             return "Run claude in a terminal and log in, then switch auto-start off and on again."
+        case .keepsFailing:
+            // ไม่บอกว่าให้ไปแก้อะไร เพราะเราไม่รู้จริงๆ — บอกว่าหาคำตอบได้ที่ไหนแทน
+            // คำแนะนำที่เดาเอาจะส่งคนไปแก้สิ่งที่ไม่ได้พัง
+            return "Why it failed is on the last line of \(Paths.log.path).\n\n"
+                + "Fix that, then switch auto-start off and on again."
         case nil:
             return nil
         }

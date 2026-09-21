@@ -1950,6 +1950,50 @@ func runAllTests() {
         lost.tick(now: at(901), usage: gone)
         equal(absent.launches, 2, "and the next tick starts a session, cooldown and all")
 
+        // marker ที่ตกหล่นต้องมีราคาจำกัด ไม่ใช่ยิงทุกห้านาทีตลอดกาล
+        let doomed = Fake()
+        let tired = SessionStarter(enabled: true, launch: doomed.launcher())
+        var clock = 0.0
+        for round in 1...SessionStarter.giveUpAfter {
+            tired.tick(now: at(clock), usage: gone)
+            equal(doomed.launches, round, "round \(round) goes out")
+            doomed.finish(.failed)
+            tired.tick(now: at(clock + 1), usage: gone)  // ให้มันรับรู้ว่าลูกจบแล้ว
+            clock += SessionStarter.cooldown + 2
+        }
+        equal(tired.blocked, .keepsFailing(SessionStarter.giveUpAfter),
+              "the same ending five times running is not this round's bad luck any more")
+        tired.tick(now: at(clock), usage: gone)
+        equal(doomed.launches, SessionStarter.giveUpAfter, "and nothing goes out after that")
+
+        // แก้แล้วสั่งลองใหม่ ต้องได้โควตาเต็ม ไม่ใช่เศษที่เหลือจากปัญหาที่เพิ่งแก้ไป
+        tired.enabled = false
+        tired.enabled = true
+        tired.tick(now: at(clock + 1), usage: gone)
+        doomed.finish(.failed)
+        expect(tired.blocked == nil, "one failure after a retry is not five")
+
+        // รอบที่สำเร็จล้างตัวนับ — ล้มสี่ ผ่านหนึ่ง แล้วล้มอีกสี่ คือสี่ ไม่ใช่แปด
+        let flappy = Fake()
+        let onOff = SessionStarter(enabled: true, launch: flappy.launcher())
+        var t = 0.0
+        let mixed: [SessionOutcome] = [.failed, .failed, .failed, .failed, .ok,
+                                       .failed, .failed, .failed, .failed]
+        for outcome in mixed {
+            onOff.tick(now: at(t), usage: gone)
+            flappy.finish(outcome)
+            onOff.tick(now: at(t + 1), usage: gone)  // ให้มันรับรู้ว่าลูกจบแล้ว
+            if outcome == .ok {
+                // รอบที่สำเร็จเปิดหน้าต่างจริง และกติกาหนึ่งครั้งต่อหน้าต่างรอเห็นมันเกิด
+                // แล้วดับก่อน — ไม่เดินสองจังหวะนี้ รอบถัดไปจะไม่ออกเลย
+                onOff.tick(now: at(t + 2), usage: open)
+                onOff.tick(now: at(t + 3), usage: gone)
+            }
+            t += SessionStarter.cooldown + 6
+        }
+        equal(flappy.launches, mixed.count, "every round in the list actually went out")
+        expect(onOff.blocked == nil, "a round that worked puts the count back to zero")
+
         // ยังไม่ได้ login = ยิงอีกกี่รอบก็จบแบบเดิม
         let anon = Fake()
         let out = SessionStarter(enabled: true, launch: anon.launcher())
@@ -1982,6 +2026,13 @@ func runAllTests() {
               .authFailed, "the login line is the one thing worth locking on")
         equal(SessionProcess.classify(code: 1, output: "fetch failed: network is unreachable"),
               .failed, "anything else is this round's bad luck")
+        // บรรทัดจริงจาก daemon.log 2026-09-21 — *session* ไม่ใช่ *token* ซึ่งเป็นคำเดียว
+        // ที่ทำให้มันยิงซ้ำทุกห้านาทีอยู่นาน
+        equal(SessionProcess.classify(
+                  code: 1,
+                  output: "Failed to authenticate: OAuth session expired "
+                      + "and could not be refreshed"),
+              .authFailed, "an expired login is an expired login, whatever it is called")
         equal(SessionProcess.classify(code: 143, output: ""), .failed,
               "a child we killed ourselves has nothing to confess")
 
@@ -2019,6 +2070,10 @@ func runAllTests() {
         // บรรทัดในแผงมีเฉพาะตอนล็อก และ path ที่ค้นมาอยู่ใน tooltip ไม่ใช่ในบรรทัด
         expect(PanelText.startProblem(nil) == nil, "nothing to say when it can start")
         expect(PanelText.startProblemDetail(nil) == nil, "and nothing to hover over either")
+        expect(PanelText.startProblem(.keepsFailing(5))?.contains("5") == true,
+               "how many times it tried is part of what the line says")
+        expect(PanelText.startProblemDetail(.keepsFailing(5))?.contains(Paths.log.path) == true,
+               "and the detail points at the file that holds the reason")
         expect(PanelText.startProblem(.notLoggedIn)?.contains("logged in") == true,
                "a login that never happened says so")
         let missing = StartBlock.noBinary(["/a/claude", "/b/claude"])

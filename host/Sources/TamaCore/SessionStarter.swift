@@ -18,6 +18,9 @@ public enum SessionOutcome: Equatable {
 public enum StartBlock: Equatable {
     case noBinary([String])
     case notLoggedIn
+    /// ล้มติดกันจนไม่ใช่ความซวยชั่วคราวอีกแล้ว — พกจำนวนรอบมาด้วย เพราะ "ลองแล้วไม่ได้"
+    /// ที่ไม่บอกว่ากี่ครั้งคือคำที่ผู้ใช้ชั่งน้ำหนักไม่ได้
+    case keepsFailing(Int)
 }
 
 /// เริ่ม Claude Code session สั้นๆ ให้เองเมื่อไม่มีหน้าต่าง 5 ชั่วโมงเปิดอยู่
@@ -35,6 +38,17 @@ public final class SessionStarter {
 
     /// ลูกที่ค้างกินช่องเดียวที่มีไว้ตลอดกาล — เลขเดียวกับ `UsagePoller.timeout`
     public static let timeout: TimeInterval = 30
+
+    /// ล้มติดกันกี่รอบถึงจะเลิกลองเอง
+    ///
+    /// `authMarkers` จงใจสั้น โดยอ้างว่า marker ที่แคบไป "แค่ยิงซ้ำอีกไม่กี่รอบ" — **ข้อนั้น
+    /// ไม่จริง** และค่าใช้จ่ายจริงคือไม่มีขอบเขต: `claude` เปลี่ยนคำว่า token เป็น session
+    /// คำเดียว แล้ว daemon ก็ยิงทุกห้านาทีข้ามคืนข้ามวันโดยไม่มีอะไรหยุดมัน
+    ///
+    /// เพดานนี้ทำให้ประโยคนั้นเป็นจริง: marker ที่ตกหล่นมีราคาจำกัดอยู่ที่ห้ารอบ
+    /// ไม่ใช่ตลอดกาล · ห้า เพราะคูณกับเย็นตัวห้านาทีแล้วได้ราวครึ่งชั่วโมง ซึ่งนานพอให้
+    /// เน็ตที่สะดุดกลับมาเอง แต่สั้นพอที่จะไม่มีใครต้องมาเจอทีหลังว่ามันวิ่งทั้งคืน
+    public static let giveUpAfter = 5
 
     /// เว้นห้านาทีนับจากลูกตัวก่อนจบ
     ///
@@ -77,6 +91,8 @@ public final class SessionStarter {
     /// ลูกจบแล้วแต่ยังไม่มีใครบอกว่ากี่โมง — callback ไม่มีนาฬิกาติดมา และการหยิบ `Date()`
     /// ตรงนั้นคือเอานาฬิกาจริงกลับเข้ามาในตรรกะที่ตั้งใจให้ฉีดเวลาได้ทั้งอัน
     private var pendingFinish = false
+    /// รอบที่ล้มติดกันตั้งแต่ครั้งที่สำเร็จล่าสุด — ศูนย์ทุกครั้งที่มี session เกิดขึ้นจริง
+    private var failures = 0
 
     public init(enabled: Bool = false, launch: @escaping Launcher) {
         self.enabled = enabled
@@ -153,6 +169,8 @@ public final class SessionStarter {
         // ทำให้ความล้มเหลวชั่วคราวครั้งเดียวฆ่าฟีเจอร์ถาวรพอๆ กับล็อก แต่เงียบกว่า
         if outcome != .ok { arm = .ready }
 
+        if outcome == .ok { failures = 0 } else { failures += 1 }
+
         switch outcome {
         case .ok:
             blocked = nil
@@ -165,8 +183,11 @@ public final class SessionStarter {
             Log.info("auto-start: stopped — claude is not logged in")
         case .failed:
             // แยกไม่ออกว่าเพราะอะไร = ไม่มีอะไรให้ผู้ใช้ทำ การล็อกตรงนี้คือปิดฟีเจอร์ทิ้ง
-            // เพราะเน็ตสะดุดครั้งเดียว
-            break
+            // เพราะเน็ตสะดุดครั้งเดียว — *ครั้งเดียว* · ล้มติดกันจนครบเพดานไม่ใช่ความซวย
+            // ชั่วคราวอีกต่อไป ไม่ว่าเราจะแยกสาเหตุออกหรือไม่ก็ตาม
+            guard failures >= Self.giveUpAfter else { break }
+            blocked = .keepsFailing(failures)
+            Log.info("auto-start: stopped — \(failures) rounds in a row ended the same way")
         }
     }
 
@@ -179,6 +200,9 @@ public final class SessionStarter {
         blocked = nil
         finishedAt = nil
         arm = .ready
+        // ไม่งั้นรอบถัดไปที่ล้มจะล็อกทันที — ผู้ใช้ที่เพิ่งลงมือแก้แล้วสั่งลองใหม่ต้องได้
+        // โควตาห้ารอบเต็ม ไม่ใช่เศษที่เหลือจากปัญหาที่เขาเพิ่งแก้ไป
+        failures = 0
     }
 }
 
@@ -257,6 +281,11 @@ public enum SessionProcess {
         "please run /login",
         "invalid api key",
         "oauth token has expired",
+        // ของจริงที่ `claude` พูดเมื่อ login หมดอายุ: "Failed to authenticate: OAuth session
+        // expired and could not be refreshed" — *session* ไม่ใช่ *token* · พลาดไปคำเดียว
+        // แปลว่าสองเดือนที่ผ่านมามันยิงซ้ำทุกห้านาทีโดยไม่มีใครเห็น เพราะบรรทัดที่บอกสาเหตุ
+        // ถูกทิ้งไปก่อนถึง log
+        "oauth session expired",
         "authentication_error",
     ]
 
